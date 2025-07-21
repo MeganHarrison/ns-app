@@ -25,5 +25,8 @@
       "database_name": "d1-starter-sessions-api",
       "database_id": "4c70d7eb-d173-4396-b11b-6bbb971eaac7"
     }
-  ]
+  ],
+  "vars": {
+    "KEAP_SERVICE_ACCOUNT_KEY": "KeapAK-6c2fca41fb2fda9bc2d39f47d621cfa4ab13eaf2c4ef062b0a"
+  }
 }

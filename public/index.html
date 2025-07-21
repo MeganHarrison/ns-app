@@ -116,29 +116,23 @@
           });
         };
 
-        const createOrder = () => {
+        const syncKeapOrders = () => {
           const bookmark = mutRef.bookmark ?? "first-unconstrained";
-          fetchWorker(
-            "POST",
-            "/api/orders",
-            {
-              customerId: containerRef.current.querySelector(
-                "input[name='customerId']",
-              ).value,
-              orderId: crypto.randomUUID(),
-              quantity: Math.ceil(Math.random() * 100),
+          setResult({ ...result, syncing: true });
+          fetchWorker("POST", "/api/sync-keap-orders", null, bookmark).then(
+            (json) => {
+              if (
+                (mutRef.bookmark ?? "").localeCompare(json.sessionBookmark) > 0
+              ) {
+                // Skip any update since it's an older bookmark than the current one.
+                return;
+              }
+              mutRef.bookmark = json.sessionBookmark;
+              setResult({ ...json, syncing: false });
+              // After sync, refresh the orders list
+              listOrders();
             },
-            bookmark,
-          ).then((json) => {
-            if (
-              (mutRef.bookmark ?? "").localeCompare(json.sessionBookmark) > 0
-            ) {
-              // Skip any update since it's an older bookmark than the current one.
-              return;
-            }
-            mutRef.bookmark = json.sessionBookmark;
-            setResult(json);
-          });
+          );
         };
 
         const resetTables = () => {
@@ -171,11 +165,11 @@
             <section>
               <h4>Actions</h4>
               <div class="grid">
-                <input name="customerId" value="customer-id-1" type="text" />
                 <input
                   type="button"
-                  onClick=${(e) => createOrder()}
-                  value="Create order & List"
+                  onClick=${(e) => syncKeapOrders()}
+                  value="Sync Keap Orders"
+                  disabled=${result?.syncing}
                 />
                 <input
                   type="button"
@@ -190,8 +184,8 @@
               </div>
               <ul style="font-size: 0.8em">
                 <li>
-                  <strong>Create order & List:</strong> 1 write query to the
-                  primary followed by 1 read query to a replica.
+                  <strong>Sync Keap Orders:</strong> Fetches orders from Keap
+                  API and syncs to D1.
                 </li>
                 <li>
                   <strong>List orders:</strong> 1 read query to a replica.
@@ -203,6 +197,22 @@
                     </li>`
                   : null}
               </ul>
+              ${result?.syncResult
+                ? html`<div style="margin-top: 1rem">
+                    <strong>Last Sync Result:</strong>
+                    <ul style="font-size: 0.8em">
+                      <li>
+                        Total orders: ${result.syncResult.totalOrders}, Synced:
+                        ${result.syncResult.syncedOrders}
+                      </li>
+                      ${result.syncResult.errors.length > 0
+                        ? html`<li style="color: red">
+                            Errors: ${result.syncResult.errors.join(", ")}
+                          </li>`
+                        : null}
+                    </ul>
+                  </div>`
+                : null}
             </section>
 
             <${Latencies} ...${result} />
@@ -213,9 +223,12 @@
                 <table class="striped">
                   <thead>
                     <tr>
-                      <th scope="col">Customer ID</th>
                       <th scope="col">Order ID</th>
-                      <th>Quantity</th>
+                      <th scope="col">Customer</th>
+                      <th scope="col">Title</th>
+                      <th scope="col">Status</th>
+                      <th scope="col">Total</th>
+                      <th scope="col">Date</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -228,10 +241,20 @@
                         </tr>`
                       : result.results.length > 0
                         ? result.results.reverse().map((row, idx) => {
-                            return html`<tr key=${`${row.now}`}>
-                              <td>${row.customerId}</td>
+                            return html`<tr key=${`${row.orderId}`}>
                               <td>${row.orderId}</td>
-                              <td>${row.quantity}</td>
+                              <td>
+                                ${row.customerName || "N/A"}<br />
+                                <small>${row.customerEmail || ""}</small>
+                              </td>
+                              <td>${row.title || ""}</td>
+                              <td>${row.status || ""}</td>
+                              <td>$${Number(row.total || 0).toFixed(2)}</td>
+                              <td>
+                                ${row.orderDate
+                                  ? new Date(row.orderDate).toLocaleDateString()
+                                  : ""}
+                              </td>
                             </tr>`;
                           })
                         : html`<tr>
@@ -251,6 +274,9 @@
             <section>
               <header class="grid">
                 <h1>D1 Sessions API</h1>
+                <div style="text-align: right;">
+                  <a href="/keap-orders.html" role="button" class="secondary">View Keap Orders</a>
+                </div>
               </header>
             </section>
 

@@ -1,7 +1,10 @@
 import { Retries } from "durable-utils";
+import { KeapClient } from "./keap-client";
+import { syncKeapOrders } from "./keap-sync";
 
 export type Env = {
   DB01: D1Database;
+  KEAP_SERVICE_ACCOUNT_KEY: string;
 };
 
 export default {
@@ -20,6 +23,7 @@ export default {
       const response = await withTablesInitialized(
         request,
         session,
+        env,
         handleRequest,
       );
 
@@ -49,7 +53,7 @@ type Order = {
   quantity: number;
 };
 
-async function handleRequest(request: Request, session: D1DatabaseSession) {
+async function handleRequest(request: Request, session: D1DatabaseSession, env: Env) {
   const { pathname } = new URL(request.url);
 
   const tsStart = Date.now();
@@ -61,28 +65,46 @@ async function handleRequest(request: Request, session: D1DatabaseSession) {
       return Response.json(buildResponse(session, resp, tsStart));
     }, shouldRetry);
   } else if (request.method === "POST" && pathname === "/api/orders") {
-    const order = await request.json<Order>();
-
-    return await Retries.tryWhile(async () => {
-      // D. Session write query.
-      // Since this is a write query, D1 will transparently forward the query.
-      await session
-        .prepare("INSERT INTO Orders VALUES (?, ?, ?) ON CONFLICT DO NOTHING")
-        .bind(order.customerId, order.orderId, order.quantity)
-        .run();
-
-      // E. Session read-after-write query.
-      // In order for the application to be correct, this SELECT
-      // statement must see the results of the INSERT statement above.
-      const resp = await session.prepare("SELECT * FROM Orders").all();
-
-      return Response.json(buildResponse(session, resp, tsStart));
-    }, shouldRetry);
+    // This endpoint is now deprecated - use /api/sync-keap-orders instead
+    return Response.json(
+      { error: "This endpoint is deprecated. Use POST /api/sync-keap-orders to sync orders from Keap." },
+      { status: 410 }
+    );
   } else if (request.method === "POST" && pathname === "/api/reset") {
     return await Retries.tryWhile(async () => {
       const resp = await resetTables(session);
       return Response.json(buildResponse(session, resp, tsStart));
     }, shouldRetry);
+  } else if (request.method === "POST" && pathname === "/api/sync-keap-orders") {
+    const keapClient = new KeapClient({
+      serviceAccountKey: env.KEAP_SERVICE_ACCOUNT_KEY,
+    });
+
+    const syncResult = await syncKeapOrders(session, keapClient);
+    
+    return Response.json({
+      ...buildResponse(session, { results: [], meta: {} } as any, tsStart),
+      syncResult,
+    });
+  } else if (request.method === "GET" && pathname === "/api/keap-orders") {
+    // Fetch orders directly from Keap API
+    const keapClient = new KeapClient({
+      serviceAccountKey: env.KEAP_SERVICE_ACCOUNT_KEY,
+    });
+
+    const url = new URL(request.url);
+    const limit = parseInt(url.searchParams.get("limit") || "20");
+    const offset = parseInt(url.searchParams.get("offset") || "0");
+
+    try {
+      const { orders, count } = await keapClient.getOrders(limit, offset);
+      return Response.json({ orders, count });
+    } catch (error) {
+      return Response.json(
+        { error: `Failed to fetch orders from Keap: ${String(error)}` },
+        { status: 500 }
+      );
+    }
   }
 
   return new Response("Not found", { status: 404 });
@@ -125,16 +147,17 @@ function shouldRetry(err: unknown, nextAttempt: number) {
 async function withTablesInitialized(
   request: Request,
   session: D1DatabaseSession,
-  handler: (request: Request, session: D1DatabaseSession) => Promise<Response>,
+  env: Env,
+  handler: (request: Request, session: D1DatabaseSession, env: Env) => Promise<Response>,
 ) {
   // We use clones of the body since if we parse it once, and then retry with the
   // same request, it will fail due to the body stream already being consumed.
   try {
-    return await handler(request.clone(), session);
+    return await handler(request.clone(), session, env);
   } catch (e) {
     if (String(e).includes("no such table: Orders: SQLITE_ERROR")) {
       await initTables(session);
-      return await handler(request.clone(), session);
+      return await handler(request.clone(), session, env);
     }
     throw e;
   }
@@ -144,10 +167,16 @@ async function initTables(session: D1DatabaseSession) {
   return await session
     .prepare(
       `CREATE TABLE IF NOT EXISTS Orders(
-			customerId TEXT NOT NULL,
-			orderId TEXT NOT NULL,
-			quantity INTEGER NOT NULL,
-			PRIMARY KEY (customerId, orderId)
+			orderId INTEGER PRIMARY KEY,
+			customerId INTEGER NOT NULL,
+			customerEmail TEXT,
+			customerName TEXT,
+			title TEXT,
+			status TEXT,
+			total REAL,
+			orderDate TEXT,
+			orderItems TEXT,
+			lastSynced TEXT DEFAULT CURRENT_TIMESTAMP
 		)`,
     )
     .all();
@@ -157,10 +186,16 @@ async function resetTables(session: D1DatabaseSession) {
   return await session
     .prepare(
       `DROP TABLE IF EXISTS Orders; CREATE TABLE IF NOT EXISTS Orders(
-			customerId TEXT NOT NULL,
-			orderId TEXT NOT NULL,
-			quantity INTEGER NOT NULL,
-			PRIMARY KEY (customerId, orderId)
+			orderId INTEGER PRIMARY KEY,
+			customerId INTEGER NOT NULL,
+			customerEmail TEXT,
+			customerName TEXT,
+			title TEXT,
+			status TEXT,
+			total REAL,
+			orderDate TEXT,
+			orderItems TEXT,
+			lastSynced TEXT DEFAULT CURRENT_TIMESTAMP
 		)`,
     )
     .all();

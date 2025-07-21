@@ -1,0 +1,415 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Keap Orders</title>
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.red.min.css"
+    />
+    <meta name="color-scheme" content="light dark" />
+    <style>
+      .loading {
+        text-align: center;
+        padding: 2rem;
+      }
+      .error {
+        color: var(--pico-color-red-500);
+        padding: 1rem;
+        border: 1px solid var(--pico-color-red-500);
+        border-radius: 0.25rem;
+        margin: 1rem 0;
+      }
+      .order-details {
+        font-size: 0.8rem;
+        line-height: 1.2;
+      }
+      .order-items {
+        margin-top: 0.5rem;
+        padding-left: 1rem;
+      }
+      .pagination {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 1rem;
+        margin: 2rem 0;
+      }
+      .pagination button {
+        min-width: 100px;
+      }
+      .stats {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 1rem;
+        margin-bottom: 1.5rem;
+      }
+      .stat-card {
+        text-align: center;
+        padding: 0.75rem;
+        border: 1px solid var(--pico-muted-border-color);
+        border-radius: 0.25rem;
+        background: var(--pico-background-color);
+      }
+      .stat-value {
+        font-size: 1rem;
+        font-weight: bold;
+        color: var(--pico-color-red-500);
+        margin-bottom: 0.25rem;
+      }
+      .stat-label {
+        font-size: 0.75rem;
+        color: var(--pico-muted-color);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+      
+      /* Compact table styling */
+      .compact-table {
+        font-size: 0.85rem;
+        border-collapse: collapse;
+      }
+      .compact-table th {
+        font-size: 0.6rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        padding: 0.5rem 0.75rem;
+        background: var(--pico-muted-background-color);
+        border-bottom: 2px solid var(--pico-muted-border-color);
+      }
+      .compact-table td {
+        padding: 0.5rem 0.75rem;
+        border-bottom: 1px solid var(--pico-muted-border-color);
+        vertical-align: top;
+      }
+      .compact-table tr:hover {
+        background: var(--pico-muted-background-color);
+      }
+      .compact-table .status-badge {
+        display: inline-block;
+        padding: 0.125rem 0.375rem;
+        border-radius: 0.25rem;
+        font-size: 0.7rem;
+        font-weight: 500;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+      .compact-table .status-paid {
+        background: #d4edda;
+        color: #155724;
+      }
+      .compact-table .status-pending {
+        background: #fff3cd;
+        color: #856404;
+      }
+      .compact-table .status-failed {
+        background: #f8d7da;
+        color: #721c24;
+      }
+      .compact-table .order-id {
+        font-weight: 600;
+        color: var(--pico-color-red-500);
+      }
+      .compact-table .customer-info {
+        line-height: 1.3;
+      }
+      .compact-table .customer-name {
+        font-weight: 500;
+        margin-bottom: 0.125rem;
+      }
+      .compact-table .customer-email {
+        font-size: 0.75rem;
+        color: var(--pico-muted-color);
+      }
+      .compact-table .amount {
+        font-weight: 600;
+        text-align: right;
+      }
+      .compact-table .date {
+        font-size: 0.8rem;
+        color: var(--pico-muted-color);
+      }
+      .compact-table .items-count {
+        font-size: 0.75rem;
+        color: var(--pico-muted-color);
+      }
+      .compact-table .action-btn {
+        padding: 0.25rem 0.5rem;
+        font-size: 0.75rem;
+        border-radius: 0.25rem;
+      }
+      .expanded-row {
+        background: var(--pico-muted-background-color) !important;
+      }
+      .expanded-content {
+        padding: 1rem;
+      }
+      .items-table {
+        font-size: 0.8rem;
+        margin-top: 0.5rem;
+      }
+      .items-table th {
+        font-size: 12px;
+        padding: 0.375rem 0.5rem;
+      }
+      .items-table td {
+        padding: 0.375rem 0.5rem;
+      }
+    </style>
+    <script type="module">
+      import { h, render } from "https://esm.sh/preact@10.25.4";
+      import {
+        useState,
+        useEffect,
+      } from "https://esm.sh/preact@10.25.4/hooks";
+      import htm from "https://esm.sh/htm@3.1.1";
+
+      const html = htm.bind(h);
+
+      const KeapOrders = () => {
+        const [orders, setOrders] = useState([]);
+        const [loading, setLoading] = useState(true);
+        const [error, setError] = useState(null);
+        const [page, setPage] = useState(1);
+        const [totalOrders, setTotalOrders] = useState(0);
+        const [expandedOrders, setExpandedOrders] = useState(new Set());
+        const ordersPerPage = 20;
+
+        const fetchOrders = async (pageNum) => {
+          setLoading(true);
+          setError(null);
+          try {
+            const offset = (pageNum - 1) * ordersPerPage;
+            const response = await fetch(
+              `/api/keap-orders?limit=${ordersPerPage}&offset=${offset}`
+            );
+            const data = await response.json();
+            
+            if (!response.ok) {
+              throw new Error(data.error || "Failed to fetch orders");
+            }
+            
+            setOrders(data.orders || []);
+            setTotalOrders(data.count || 0);
+          } catch (err) {
+            setError(err.message);
+          } finally {
+            setLoading(false);
+          }
+        };
+
+        useEffect(() => {
+          fetchOrders(page);
+        }, [page]);
+
+        const toggleOrderExpansion = (orderId) => {
+          const newExpanded = new Set(expandedOrders);
+          if (newExpanded.has(orderId)) {
+            newExpanded.delete(orderId);
+          } else {
+            newExpanded.add(orderId);
+          }
+          setExpandedOrders(newExpanded);
+        };
+
+        const totalPages = Math.ceil(totalOrders / ordersPerPage);
+
+        const stats = {
+          total: totalOrders,
+          currentPage: page,
+          totalValue: orders.reduce((sum, order) => sum + ((order.total?.amount || 0) / 100), 0),
+          avgOrderValue: orders.length > 0 
+            ? (orders.reduce((sum, order) => sum + ((order.total?.amount || 0) / 100), 0) / orders.length)
+            : 0
+        };
+
+        return html`
+          <div>
+            <section style="margin-bottom: 1rem;">
+              <header class="grid" style="margin-bottom: 0;">
+                <h2 style="margin-bottom: 0;">Keap Orders</h2>
+                <div style="text-align: right;">
+                  <a href="/" role="button" class="secondary" style="padding: 0.5rem 1rem; font-size: 0.875rem;">Back to D1 Orders</a>
+                </div>
+              </header>
+            </section>
+
+            ${!loading && !error && html`
+              <section class="stats">
+                <div class="stat-card">
+                  <div class="stat-value">${stats.total}</div>
+                  <div class="stat-label">Total Orders</div>
+                </div>
+                <div class="stat-card">
+                  <div class="stat-value">$${stats.totalValue.toFixed(2)}</div>
+                  <div class="stat-label">Page Total</div>
+                </div>
+                <div class="stat-card">
+                  <div class="stat-value">$${stats.avgOrderValue.toFixed(2)}</div>
+                  <div class="stat-label">Average Order</div>
+                </div>
+                <div class="stat-card">
+                  <div class="stat-value">${stats.currentPage} / ${totalPages}</div>
+                  <div class="stat-label">Current Page</div>
+                </div>
+              </section>
+            `}
+
+            <section>
+              ${loading && html`
+                <div class="loading">
+                  <p>Loading orders from Keap...</p>
+                  <progress></progress>
+                </div>
+              `}
+              
+              ${error && html`
+                <div class="error">
+                  <strong>Error:</strong> ${error}
+                </div>
+              `}
+              
+              ${!loading && !error && html`
+                <div class="overflow-auto">
+                  <table class="compact-table">
+                    <thead>
+                      <tr>
+                        <th>Order ID</th>
+                        <th>Date</th>
+                        <th>Customer</th>
+                        <th>Title</th>
+                        <th>Status</th>
+                        <th>Items</th>
+                        <th>Total</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      ${orders.length === 0 
+                        ? html`
+                          <tr>
+                            <td colspan="8" style="text-align: center;">
+                              No orders found
+                            </td>
+                          </tr>
+                        `
+                        : orders.map(order => html`
+                          <tr key=${order.id}>
+                            <td class="order-id">#${order.id}</td>
+                            <td class="date">
+                              ${order.order_time 
+                                ? new Date(order.order_time).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                                : order.creation_time
+                                ? new Date(order.creation_time).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                                : 'N/A'
+                              }
+                            </td>
+                            <td>
+                              <div class="customer-info">
+                                <div class="customer-name">${order.contact?.given_name || ''} ${order.contact?.family_name || ''}</div>
+                                ${order.contact?.email && html`
+                                  <div class="customer-email">${order.contact.email}</div>
+                                `}
+                              </div>
+                            </td>
+                            <td style="max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                              ${order.title || 'Untitled'}
+                            </td>
+                            <td>
+                              <span class="status-badge ${
+                                order.status === 'PAID' ? 'status-paid' :
+                                order.status === 'PENDING' ? 'status-pending' :
+                                'status-failed'
+                              }">
+                                ${order.status || 'Unknown'}
+                              </span>
+                            </td>
+                            <td class="items-count">
+                              ${order.order_items?.length || 0} item${(order.order_items?.length || 0) !== 1 ? 's' : ''}
+                            </td>
+                            <td class="amount">
+                              $${((order.total?.amount || 0) / 100).toFixed(2)}
+                            </td>
+                            <td>
+                              <button 
+                                class="secondary action-btn"
+                                onClick=${() => toggleOrderExpansion(order.id)}
+                              >
+                                ${expandedOrders.has(order.id) ? '▼' : '▶'}
+                              </button>
+                            </td>
+                          </tr>
+                          ${expandedOrders.has(order.id) && order.order_items?.length > 0 && html`
+                            <tr class="expanded-row">
+                              <td colspan="8">
+                                <div class="expanded-content">
+                                  <strong style="font-size: 0.9rem; margin-bottom: 0.5rem; display: block;">Order Items (${order.order_items.length}):</strong>
+                                  <table class="items-table">
+                                    <thead>
+                                      <tr>
+                                        <th>Product</th>
+                                        <th style="text-align: center;">Qty</th>
+                                        <th style="text-align: right;">Price</th>
+                                        <th style="text-align: right;">Subtotal</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      ${order.order_items.map(item => html`
+                                        <tr>
+                                          <td>${item.name || item.product?.name || 'Unknown Product'}</td>
+                                          <td style="text-align: center;">${item.quantity}</td>
+                                          <td style="text-align: right;">$${((item.price?.amount || 0) / 100).toFixed(2)}</td>
+                                          <td style="text-align: right; font-weight: 600;">$${(((item.price?.amount || 0) / 100) * item.quantity).toFixed(2)}</td>
+                                        </tr>
+                                      `)}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </td>
+                            </tr>
+                          `}
+                        `)
+                      }
+                    </tbody>
+                  </table>
+                </div>
+
+                ${totalPages > 1 && html`
+                  <div class="pagination">
+                    <button 
+                      onClick=${() => setPage(Math.max(1, page - 1))}
+                      disabled=${page === 1}
+                    >
+                      Previous
+                    </button>
+                    <span>Page ${page} of ${totalPages}</span>
+                    <button 
+                      onClick=${() => setPage(Math.min(totalPages, page + 1))}
+                      disabled=${page === totalPages}
+                    >
+                      Next
+                    </button>
+                  </div>
+                `}
+              `}
+            </section>
+
+            <hr />
+            <small>
+              Data fetched directly from Keap API. 
+              <a href="/">View synced orders in D1</a>
+            </small>
+          </div>
+        `;
+      };
+
+      render(html`<${KeapOrders} />`, document.getElementById("app"));
+    </script>
+  </head>
+
+  <body>
+    <main class="container-fluid" id="app"></main>
+  </body>
+</html>
