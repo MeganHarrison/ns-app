@@ -61,7 +61,7 @@ async function handleRequest(request: Request, session: D1DatabaseSession, env: 
   if (request.method === "GET" && pathname === "/api/orders") {
     // C. Session read query.
     return await Retries.tryWhile(async () => {
-      const resp = await session.prepare("SELECT * FROM Orders").all();
+      const resp = await session.prepare("SELECT * FROM ns_orders ORDER BY orderDate DESC").all();
       return Response.json(buildResponse(session, resp, tsStart));
     }, shouldRetry);
   } else if (request.method === "POST" && pathname === "/api/orders") {
@@ -155,7 +155,7 @@ async function withTablesInitialized(
   try {
     return await handler(request.clone(), session, env);
   } catch (e) {
-    if (String(e).includes("no such table: Orders: SQLITE_ERROR")) {
+    if (String(e).includes("no such table: ns_orders: SQLITE_ERROR")) {
       await initTables(session);
       return await handler(request.clone(), session, env);
     }
@@ -166,7 +166,7 @@ async function withTablesInitialized(
 async function initTables(session: D1DatabaseSession) {
   return await session
     .prepare(
-      `CREATE TABLE IF NOT EXISTS Orders(
+      `CREATE TABLE IF NOT EXISTS ns_orders(
 			orderId INTEGER PRIMARY KEY,
 			customerId INTEGER NOT NULL,
 			customerEmail TEXT,
@@ -185,7 +185,7 @@ async function initTables(session: D1DatabaseSession) {
 async function resetTables(session: D1DatabaseSession) {
   return await session
     .prepare(
-      `DROP TABLE IF EXISTS Orders; CREATE TABLE IF NOT EXISTS Orders(
+      `DROP TABLE IF EXISTS ns_orders; CREATE TABLE IF NOT EXISTS ns_orders(
 			orderId INTEGER PRIMARY KEY,
 			customerId INTEGER NOT NULL,
 			customerEmail TEXT,

@@ -26,7 +26,7 @@ describe("d1-starter-sessions-api worker", () => {
     });
   });
 
-  it("create random order", async () => {
+  it("deprecated POST orders endpoint returns 410", async () => {
     const request = new IncomingRequest("http://example.com/api/orders", {
       method: "POST",
       headers: {
@@ -40,18 +40,10 @@ describe("d1-starter-sessions-api worker", () => {
     });
     const ctx = createExecutionContext();
     const response = await worker.fetch(request, env, ctx);
-    // Wait for all `Promise`s passed to `ctx.waitUntil()` to settle before running test assertions
     await waitOnExecutionContext(ctx);
+    expect(response.status).toBe(410);
     expect(await response.json()).toMatchObject({
-      d1Latency: expect.any(Number),
-      results: [
-        {
-          customerId: "customer-id-test",
-          orderId: "random-id-123",
-          quantity: 98,
-        },
-      ],
-      sessionBookmark: expect.any(String),
+      error: "This endpoint is deprecated. Use POST /api/sync-keap-orders to sync orders from Keap.",
     });
   });
 });

@@ -53,7 +53,7 @@ async function upsertOrder(session: D1DatabaseSession, order: KeapOrder): Promis
 
   await session
     .prepare(
-      `INSERT INTO Orders (
+      `INSERT INTO ns_orders (
         orderId, customerId, customerEmail, customerName,
         title, status, total, orderDate, orderItems, lastSynced
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
