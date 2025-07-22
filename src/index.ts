@@ -183,20 +183,39 @@ async function initTables(session: D1DatabaseSession) {
 }
 
 async function resetTables(session: D1DatabaseSession) {
-  return await session
-    .prepare(
-      `DROP TABLE IF EXISTS ns_orders; CREATE TABLE IF NOT EXISTS ns_orders(
-			orderId INTEGER PRIMARY KEY,
-			customerId INTEGER NOT NULL,
-			customerEmail TEXT,
-			customerName TEXT,
-			title TEXT,
-			status TEXT,
-			total REAL,
-			orderDate TEXT,
-			orderItems TEXT,
-			lastSynced TEXT DEFAULT CURRENT_TIMESTAMP
-		)`,
-    )
-    .all();
+  try {
+    await session.prepare("DROP TABLE IF EXISTS ns_orders").run();
+  } catch (e) {
+    console.error({
+      message: "Failed to drop ns_orders table",
+      error: String(e),
+      errorProps: e,
+    });
+  }
+
+  try {
+    return await session
+      .prepare(
+        `CREATE TABLE IF NOT EXISTS ns_orders(
+                        orderId INTEGER PRIMARY KEY,
+                        customerId INTEGER NOT NULL,
+                        customerEmail TEXT,
+                        customerName TEXT,
+                        title TEXT,
+                        status TEXT,
+                        total REAL,
+                        orderDate TEXT,
+                        orderItems TEXT,
+                        lastSynced TEXT DEFAULT CURRENT_TIMESTAMP
+                )`,
+      )
+      .run();
+  } catch (e) {
+    console.error({
+      message: "Failed to create ns_orders table",
+      error: String(e),
+      errorProps: e,
+    });
+    throw e;
+  }
 }
