@@ -12,7 +12,7 @@ export default defineConfig({
   workers: process.env.CI ? 1 : undefined,
   reporter: 'html',
   use: {
-    baseURL: 'https://d1-starter-sessions-api.megan-d14.workers.dev',
+    baseURL: process.env.BASE_URL || 'https://d1-starter-sessions-api.megan-d14.workers.dev',
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
   },
