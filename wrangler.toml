@@ -1,0 +1,25 @@
+name = "nutrition-solutions-analytics"
+main = "src/index.ts"
+compatibility_date = "2024-07-22"
+compatibility_flags = ["nodejs_compat"]
+account_id = "d1416265449d2a0bae41c45c791270ec"
+
+# Your existing D1 database
+[[d1_databases]]
+binding = "ORDERS_DB"
+database_name = "nutrition-solutions-orders"
+database_id = "32fb1598-c697-4d03-b31b-cac20677c98d"
+
+# KV for configuration and caching
+[[kv_namespaces]]
+binding = "CONFIG_KV"
+id = "66e2d8cdf0bf474285d1d95811dd417c"
+
+# Environment variables
+[vars]
+ENVIRONMENT = "production"
+KEAP_APP_ID = "f3758888-5b87-4228-b394-669991d857f8"
+
+# Automatic syncing every 15 minutes
+[[triggers]]
+crons = ["*/15 * * * *"]

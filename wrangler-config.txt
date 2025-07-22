@@ -1,0 +1,55 @@
+# wrangler.toml - Cloudflare Worker Configuration
+name = "nutrition-solutions-analytics"
+main = "src/index.ts"
+compatibility_date = "2024-07-22"
+compatibility_flags = ["nodejs_compat"]
+
+# Worker settings for optimal performance
+[env.production]
+name = "nutrition-solutions-analytics"
+vars = { ENVIRONMENT = "production" }
+
+# D1 Database binding for lightning-fast queries
+[[env.production.d1_databases]]
+binding = "ORDERS_DB"
+database_name = "nutrition-solutions-orders"
+database_id = "your-d1-database-id-here"
+
+# Environment variables (set via Cloudflare dashboard for security)
+[env.production.vars]
+KEAP_APP_ID = "f3758888-5b87-4228-b394-669991d857f8"
+# KEAP_CLIENT_ID, KEAP_SECRET, KEAP_SERVICE_ACCOUNT_KEY set via dashboard
+
+# Development environment
+[env.development]
+name = "nutrition-solutions-analytics-dev"
+vars = { ENVIRONMENT = "development" }
+
+[[env.development.d1_databases]]
+binding = "ORDERS_DB"
+database_name = "nutrition-solutions-orders-dev"
+database_id = "your-dev-d1-database-id-here"
+
+# Cron trigger for automatic syncing
+[[env.production.triggers]]
+crons = ["*/15 * * * *"]  # Sync every 15 minutes
+
+# Analytics and monitoring
+[env.production.analytics_engine_datasets]
+binding = "ANALYTICS"
+dataset = "nutrition_solutions_analytics"
+
+# Durable Objects for real-time features (optional)
+[[durable_objects.bindings]]
+name = "REAL_TIME_SYNC"
+class_name = "RealTimeSyncObject"
+
+# Queue for background processing
+[[queues.producers]]
+binding = "ORDER_QUEUE"
+queue = "nutrition-solutions-orders"
+
+[[queues.consumers]]
+queue = "nutrition-solutions-orders"
+max_batch_size = 10
+max_batch_timeout = 5
