@@ -72,6 +72,7 @@ Orders table with Keap-specific fields:
 ### Environment Requirements
 
 - `KEAP_SERVICE_ACCOUNT_KEY` - Required for Keap API authentication
+- `BASE_URL` - Base URL used by Playwright tests. Defaults to `https://d1-starter-sessions-api.megan-d14.workers.dev` if not set.
 - D1 database binding `DB01` configured in wrangler.jsonc
 
 ## Testing
