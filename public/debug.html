@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Debug Dashboard</title>
+    <style>
+        body { font-family: system-ui; margin: 40px; }
+        .section { margin: 20px 0; padding: 20px; background: #f5f5f5; border-radius: 8px; }
+        pre { background: #333; color: #fff; padding: 15px; border-radius: 5px; overflow-x: auto; }
+        button { background: #667eea; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; margin: 5px; }
+        button:hover { background: #5a6fd8; }
+        .success { color: green; }
+        .error { color: red; }
+        .info { color: blue; }
+    </style>
+</head>
+<body>
+    <h1>Nutrition Solutions Debug Dashboard</h1>
+    
+    <div class="section">
+        <h2>1. Database Status</h2>
+        <button onclick="checkDatabase()">Check Database</button>
+        <pre id="dbStatus">Click button to check database status...</pre>
+    </div>
+
+    <div class="section">
+        <h2>2. Keap Connection Test</h2>
+        <button onclick="testKeap()">Test Keap API</button>
+        <pre id="keapStatus">Click button to test Keap connection...</pre>
+    </div>
+
+    <div class="section">
+        <h2>3. Sync Data</h2>
+        <button onclick="syncOrders()">Sync Orders</button>
+        <button onclick="syncContacts()">Sync Contacts</button>
+        <button onclick="syncAll()">Sync All Data</button>
+        <pre id="syncStatus">Click a button to start syncing...</pre>
+    </div>
+
+    <div class="section">
+        <h2>4. API Metrics Test</h2>
+        <button onclick="testMetrics()">Test /api/metrics</button>
+        <pre id="metricsStatus">Click button to test metrics endpoint...</pre>
+    </div>
+
+    <script>
+        const API_BASE = window.location.origin;
+
+        async function checkDatabase() {
+            const status = document.getElementById('dbStatus');
+            status.textContent = 'Checking database...';
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/debug/db-status`);
+                const data = await response.json();
+                status.textContent = JSON.stringify(data, null, 2);
+                
+                // Highlight if tables are empty
+                if (data.tables) {
+                    let hasData = false;
+                    for (const [table, count] of Object.entries(data.tables)) {
+                        if (count > 0) hasData = true;
+                    }
+                    if (!hasData) {
+                        status.innerHTML += '\n\n<span class="error">⚠️ All tables are empty! You need to sync data first.</span>';
+                    }
+                }
+            } catch (error) {
+                status.innerHTML = `<span class="error">Error: ${error.message}</span>`;
+            }
+        }
+
+        async function testKeap() {
+            const status = document.getElementById('keapStatus');
+            status.textContent = 'Testing Keap connection...';
+            
+            try {
+                const response = await fetch(`${API_BASE}/keap-orders?limit=1`);
+                const data = await response.json();
+                status.textContent = JSON.stringify(data, null, 2);
+                
+                if (data.orders && data.orders.length > 0) {
+                    status.innerHTML = `<span class="success">✅ Keap API is working!</span>\n\n${status.textContent}`;
+                }
+            } catch (error) {
+                status.innerHTML = `<span class="error">Error: ${error.message}</span>`;
+            }
+        }
+
+        async function syncOrders() {
+            const status = document.getElementById('syncStatus');
+            status.textContent = 'Syncing orders...';
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/sync-orders`, { method: 'POST' });
+                const data = await response.json();
+                status.textContent = JSON.stringify(data, null, 2);
+                
+                if (data.success) {
+                    status.innerHTML = `<span class="success">✅ Orders synced successfully!</span>\n\n${status.textContent}`;
+                }
+            } catch (error) {
+                status.innerHTML = `<span class="error">Error: ${error.message}</span>`;
+            }
+        }
+
+        async function syncContacts() {
+            const status = document.getElementById('syncStatus');
+            status.textContent = 'Syncing contacts...';
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/sync/contacts`, { method: 'POST' });
+                const data = await response.json();
+                status.textContent = JSON.stringify(data, null, 2);
+                
+                if (data.success) {
+                    status.innerHTML = `<span class="success">✅ Contacts synced successfully!</span>\n\n${status.textContent}`;
+                }
+            } catch (error) {
+                status.innerHTML = `<span class="error">Error: ${error.message}</span>`;
+            }
+        }
+
+        async function syncAll() {
+            const status = document.getElementById('syncStatus');
+            status.textContent = 'Syncing all data... This may take a while...';
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/sync/all`, { method: 'POST' });
+                const data = await response.json();
+                status.textContent = JSON.stringify(data, null, 2);
+                
+                if (data.success) {
+                    status.innerHTML = `<span class="success">✅ All data synced successfully!</span>\n\n${status.textContent}`;
+                }
+            } catch (error) {
+                status.innerHTML = `<span class="error">Error: ${error.message}</span>`;
+            }
+        }
+
+        async function testMetrics() {
+            const status = document.getElementById('metricsStatus');
+            status.textContent = 'Testing metrics endpoint...';
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/metrics`);
+                const data = await response.json();
+                status.textContent = JSON.stringify(data, null, 2);
+                
+                // Check if we have actual data
+                if (data.summary) {
+                    const hasRevenue = data.summary.total_revenue > 0;
+                    const hasCustomers = data.summary.total_customers > 0;
+                    
+                    if (!hasRevenue && !hasCustomers) {
+                        status.innerHTML += '\n\n<span class="error">⚠️ No data found. Make sure to sync data first!</span>';
+                    } else {
+                        status.innerHTML = `<span class="success">✅ Metrics are working!</span>\n\n${status.textContent}`;
+                    }
+                }
+            } catch (error) {
+                status.innerHTML = `<span class="error">Error: ${error.message}</span>`;
+            }
+        }
+
+        // Auto-check database on load
+        window.addEventListener('load', () => {
+            checkDatabase();
+        });
+    </script>
+</body>
+</html>

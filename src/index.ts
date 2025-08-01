@@ -1,11 +1,18 @@
-// Nutrition Solutions Analytics - Lightning Fast Keap Replacement
+import { KeapClient } from '../workers/keap-client';
+import { KeapXMLRPCClient, formatDateForKeap } from '../workers/keap-xmlrpc-client';
+import { SupabaseService, SupabaseOrder } from './supabase-client';
+import { CacheService, CacheKeys, CacheTTL } from './cache-service-stub';
+import { DataSync, DashboardAnalytics, WebhookHandler, WebhookPayload } from './stubs';
+
+// Fixed Nutrition Solutions Worker - Includes both analytics AND original keap-orders endpoint
 export interface Env {
-  ORDERS_DB: D1Database;
-  CONFIG_KV: KVNamespace;
-  KEAP_CLIENT_ID: string;
-  KEAP_SECRET: string;
+  DB01: D1Database;
+  CACHE: KVNamespace;
   KEAP_SERVICE_ACCOUNT_KEY: string;
-  KEAP_APP_ID: string;
+  KEAP_APP_ID?: string;
+  HYPERDRIVE: Hyperdrive;
+  SUPABASE_URL?: string;
+  SUPABASE_ANON_KEY?: string;
 }
 
 interface KeapOrder {
@@ -18,630 +25,1327 @@ interface KeapOrder {
   payment_status: string;
   lead_affiliate_id?: number;
   order_items?: Array<{
-    id: number;
     product_id: number;
     product_name: string;
-    price: number;
     quantity: number;
+    price: number;
   }>;
 }
 
-class KeapApiClient {
+// Keap API Client
+class KeapAPIClient {
   private baseUrl = 'https://api.infusionsoft.com/crm/rest/v1';
-  
-  constructor(private env: Env) {}
-  
-  private async getAccessToken(): Promise<string> {
-    return this.env.KEAP_SERVICE_ACCOUNT_KEY;
+  private serviceAccountKey: string;
+
+  constructor(serviceAccountKey: string) {
+    this.serviceAccountKey = serviceAccountKey;
   }
-  
-  async getOrdersSince(lastSync: string, limit = 100): Promise<KeapOrder[]> {
-    const token = await this.getAccessToken();
-    
-    const params = new URLSearchParams({
-      limit: limit.toString(),
-      order: 'id',
-      since: lastSync,
-      optional_properties: 'LeadAffiliateId,OrderItems'
-    });
-    
-    const response = await fetch(`${this.baseUrl}/orders?${params}`, {
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json'
+
+  async fetchOrders(limit: number = 1000): Promise<KeapOrder[]> {
+    try {
+      const url = `${this.baseUrl}/orders?limit=${limit}`;
+      console.log('Fetching from:', url);
+      
+      const response = await fetch(url, {
+        headers: {
+          'Authorization': `Bearer ${this.serviceAccountKey}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      console.log('Response status:', response.status);
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Keap API Error:', errorText);
+        throw new Error(`Keap API returned ${response.status}: ${errorText}`);
       }
-    });
-    
-    if (!response.ok) {
-      throw new Error(`Keap API error: ${response.status}`);
+
+      const data = await response.json();
+      console.log('Raw API response keys:', Object.keys(data));
+      
+      // Keap returns orders in different possible structures
+      const orders = data.orders || data.results || data || [];
+      console.log(`Found ${orders.length} orders`);
+      
+      return orders;
+    } catch (error) {
+      console.error('Error fetching orders:', error);
+      throw error;
     }
-    
-    const data = await response.json();
-    return data.orders || [];
   }
 }
 
+// Analytics class (simplified for now)
 class FastAnalytics {
-  constructor(private db: D1Database, private kv: KVNamespace) {}
-  
-  async initializeTables(): Promise<void> {
-    await this.db.exec(`
-      CREATE TABLE IF NOT EXISTS orders (
-        id INTEGER PRIMARY KEY,
-        order_date TEXT NOT NULL,
-        order_total REAL NOT NULL,
-        contact_id INTEGER NOT NULL,
-        order_title TEXT,
-        order_type TEXT,
-        payment_status TEXT,
-        lead_affiliate_id INTEGER,
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-      );
+  constructor(private db: D1Database) {}
+
+  async getBasicMetrics() {
+    try {
+      // Check if orders table exists
+      const tableCheck = await this.db.prepare(`
+        SELECT name FROM sqlite_master WHERE type='table' AND name='orders'
+      `).first();
+
+      if (!tableCheck) {
+        return {
+          message: "No orders table found. Run sync first.",
+          tables_available: await this.getAvailableTables()
+        };
+      }
+
+      // First check if we have any orders at all
+      const orderCount = await this.db.prepare(`
+        SELECT COUNT(*) as count FROM orders
+      `).first();
       
-      CREATE TABLE IF NOT EXISTS order_items (
-        id INTEGER PRIMARY KEY,
-        order_id INTEGER NOT NULL,
-        product_id INTEGER NOT NULL,
-        product_name TEXT NOT NULL,
-        price REAL NOT NULL,
-        quantity INTEGER NOT NULL,
-        FOREIGN KEY (order_id) REFERENCES orders (id)
-      );
+      console.log('Total orders in database:', orderCount?.count || 0);
       
-      -- Lightning-fast indexes
-      CREATE INDEX IF NOT EXISTS idx_orders_date ON orders (order_date);
-      CREATE INDEX IF NOT EXISTS idx_orders_contact ON orders (contact_id);
-      CREATE INDEX IF NOT EXISTS idx_orders_total ON orders (order_total);
-      CREATE INDEX IF NOT EXISTS idx_orders_status ON orders (payment_status);
-      CREATE INDEX IF NOT EXISTS idx_items_product ON order_items (product_id);
-    `);
-  }
-  
-  async getLastSyncTimestamp(): Promise<string> {
-    const lastSync = await this.kv.get('last_sync');
-    return lastSync || '2020-01-01T00:00:00Z';
-  }
-  
-  async updateSyncTimestamp(timestamp: string): Promise<void> {
-    await this.kv.put('last_sync', timestamp);
-  }
-  
-  async batchInsertOrders(orders: KeapOrder[]): Promise<void> {
-    if (orders.length === 0) return;
-    
-    const statements = orders.flatMap(order => {
-      const orderStatement = this.db.prepare(`
-        INSERT OR REPLACE INTO orders 
-        (id, order_date, order_total, contact_id, order_title, order_type, payment_status, lead_affiliate_id, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-      `).bind(
-        order.id,
-        order.order_date,
-        order.order_total,
-        order.contact_id,
-        order.order_title,
-        order.order_type,
-        order.payment_status,
-        order.lead_affiliate_id
-      );
+      // Get all unique statuses to debug
+      const statuses = await this.db.prepare(`
+        SELECT DISTINCT status FROM orders LIMIT 10
+      `).all();
       
-      const itemStatements = order.order_items?.map(item => 
-        this.db.prepare(`
-          INSERT OR REPLACE INTO order_items 
-          (id, order_id, product_id, product_name, price, quantity)
-          VALUES (?, ?, ?, ?, ?, ?)
-        `).bind(
-          item.id,
-          order.id,
-          item.product_id,
-          item.product_name,
-          item.price,
-          item.quantity
-        )
-      ) || [];
+      console.log('Order statuses found:', statuses.results.map(s => s.status));
       
-      return [orderStatement, ...itemStatements];
-    });
-    
-    await this.db.batch(statements);
+      const metrics = await this.db.prepare(`
+        SELECT 
+          COUNT(*) as total_orders,
+          SUM(total_amount) as total_revenue,
+          AVG(total_amount) as avg_order_value,
+          COUNT(DISTINCT contact_id) as unique_customers
+        FROM orders
+        WHERE status IN ('paid', 'completed', 'Paid', 'PAID', 'Completed', 'COMPLETED')
+      `).first();
+
+      // Get additional metrics from new tables
+      const contactCount = await this.db.prepare(`
+        SELECT COUNT(*) as total_contacts FROM contacts
+      `).first();
+
+      const productCount = await this.db.prepare(`
+        SELECT COUNT(*) as total_products FROM products
+      `).first();
+
+      const subscriptionMetrics = await this.db.prepare(`
+        SELECT 
+          COUNT(*) as active_subscriptions,
+          SUM(billing_amount) as monthly_recurring_revenue
+        FROM subscriptions
+        WHERE status = 'active'
+      `).first();
+
+      return {
+        orders: metrics,
+        contacts: contactCount,
+        products: productCount,
+        subscriptions: subscriptionMetrics,
+        summary: {
+          total_revenue: metrics?.total_revenue || 0,
+          total_customers: contactCount?.total_contacts || 0,
+          mrr: subscriptionMetrics?.monthly_recurring_revenue || 0
+        }
+      };
+    } catch (error) {
+      console.error('Analytics error:', error);
+      return { error: error.message };
+    }
   }
-  
-  // Lightning-fast analytics queries
-  async getDashboardMetrics(): Promise<any> {
-    const query = `
-      SELECT 
-        COUNT(*) as total_orders,
-        SUM(order_total) as total_revenue,
-        AVG(order_total) as avg_order_value,
-        COUNT(DISTINCT contact_id) as unique_customers,
-        SUM(CASE WHEN payment_status = 'paid' THEN order_total ELSE 0 END) as paid_revenue,
-        COUNT(CASE WHEN date(order_date) = date('now') THEN 1 END) as orders_today,
-        COUNT(CASE WHEN date(order_date) >= date('now', '-7 days') THEN 1 END) as orders_week,
-        COUNT(CASE WHEN date(order_date) >= date('now', '-30 days') THEN 1 END) as orders_month
-      FROM orders 
-      WHERE order_date >= date('now', '-1 year')
-    `;
-    
-    return await this.db.prepare(query).first();
-  }
-  
-  async getRevenueByMonth(): Promise<any> {
-    return await this.db.prepare(`
-      SELECT 
-        strftime('%Y-%m', order_date) as month,
-        SUM(order_total) as revenue,
-        COUNT(*) as orders,
-        COUNT(DISTINCT contact_id) as customers
-      FROM orders 
-      WHERE payment_status = 'paid' AND order_date >= date('now', '-12 months')
-      GROUP BY strftime('%Y-%m', order_date)
-      ORDER BY month DESC
-      LIMIT 12
-    `).all();
-  }
-  
-  async getTopProducts(limit = 10): Promise<any> {
-    return await this.db.prepare(`
-      SELECT 
-        oi.product_name,
-        oi.product_id,
-        SUM(oi.quantity) as total_quantity,
-        SUM(oi.price * oi.quantity) as total_revenue,
-        COUNT(DISTINCT oi.order_id) as order_count,
-        AVG(oi.price) as avg_price
-      FROM order_items oi
-      JOIN orders o ON oi.order_id = o.id
-      WHERE o.payment_status = 'paid'
-      GROUP BY oi.product_id, oi.product_name
-      ORDER BY total_revenue DESC
-      LIMIT ?
-    `).bind(limit).all();
+
+  async getAvailableTables() {
+    try {
+      const tables = await this.db.prepare(`
+        SELECT name FROM sqlite_master WHERE type='table'
+      `).all();
+      return tables.results.map(t => t.name);
+    } catch (error) {
+      return [];
+    }
   }
 }
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
-    const pathname = url.pathname;
-    
+    const keapClient = new KeapAPIClient(env.KEAP_SERVICE_ACCOUNT_KEY);
+    const analytics = new FastAnalytics(env.DB01);
+
+    // CORS headers
     const corsHeaders = {
       'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type, Authorization',
     };
-    
+
     if (request.method === 'OPTIONS') {
       return new Response(null, { headers: corsHeaders });
     }
-    
-    const keapClient = new KeapApiClient(env);
-    const analytics = new FastAnalytics(env.ORDERS_DB, env.CONFIG_KV);
-    
+
     try {
-      // Initialize database on first run
-      if (pathname === '/init') {
-        await analytics.initializeTables();
-        return new Response(JSON.stringify({ status: 'Database initialized' }), {
-          headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
+      switch (url.pathname) {
+        case '/':
+          return new Response(generateMainDashboard(), {
+            headers: { ...corsHeaders, 'Content-Type': 'text/html' }
+          });
+
+        case '/keap-orders':
+          // Original endpoint - fetch live from Keap API
+          const orders = await keapClient.fetchOrders(100); // Limit for speed
+          return new Response(JSON.stringify({
+            orders: orders,
+            count: orders.length,
+            fetched_at: new Date().toISOString()
+          }, null, 2), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+
+        case '/api/metrics':
+          try {
+            const cache = new CacheService(env.CACHE);
+            const cacheKey = CacheKeys.metrics();
+            
+            // Try to get from cache first
+            const cachedMetrics = await cache.get(cacheKey);
+            if (cachedMetrics) {
+              return new Response(JSON.stringify({
+                ...cachedMetrics,
+                _cached: true,
+                _cachedAt: new Date().toISOString()
+              }, null, 2), {
+                headers: { 
+                  ...corsHeaders, 
+                  'Content-Type': 'application/json',
+                  'X-Cache': 'HIT'
+                }
+              });
+            }
+            
+            // Get fresh metrics
+            const metrics = await analytics.getBasicMetrics();
+            
+            // Cache for 5 minutes
+            await cache.set(cacheKey, metrics, { ttl: CacheTTL.MEDIUM });
+            
+            return new Response(JSON.stringify({
+              ...metrics,
+              _cached: false
+            }, null, 2), {
+              headers: { 
+                ...corsHeaders, 
+                'Content-Type': 'application/json',
+                'X-Cache': 'MISS'
+              }
+            });
+          } catch (error) {
+            console.error('Metrics error:', error);
+            // Fallback to non-cached version
+            const metrics = await analytics.getBasicMetrics();
+            return new Response(JSON.stringify(metrics, null, 2), {
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+          }
+
+        case '/api/sync-orders':
+          // Sync orders from Keap using the new sync system
+          try {
+            const keapClientV2 = new KeapClient({ serviceAccountKey: env.KEAP_SERVICE_ACCOUNT_KEY });
+            const dataSync = new DataSync(keapClientV2, env.DB01);
+            
+            const result = await dataSync.syncOrders();
+            
+            return new Response(JSON.stringify({
+              success: true,
+              message: `Synced ${result.synced} orders to database`,
+              ...result
+            }), {
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+          } catch (error) {
+            console.error('Order sync error:', error);
+            return new Response(JSON.stringify({
+              success: false,
+              error: error.message
+            }), {
+              status: 500,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+          }
+
+        case '/api/tables':
+          // List all tables in the database
+          const tableList = await env.DB01.prepare(`
+            SELECT name, sql FROM sqlite_master WHERE type='table'
+          `).all();
+          
+          return new Response(JSON.stringify({
+            tables: tableList.results,
+            count: tableList.results.length
+          }, null, 2), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+
+        case '/api/migrate':
+          // Migrate to new database schema
+          try {
+            // First check current state
+            const checkTables = await env.DB01.prepare(`
+              SELECT name FROM sqlite_master WHERE type='table'
+            `).all();
+            
+            const currentTables = checkTables.results.map(t => t.name);
+            
+            // Determine migration status
+            const hasNewSchema = currentTables.includes('companies');
+            const hasOrdersNew = currentTables.includes('orders_new');
+            const hasOrdersLower = currentTables.includes('orders');
+            const hasOrdersUpper = currentTables.includes('Orders');
+            
+            // If migration is complete, return success
+            if (hasNewSchema && hasOrdersLower && !hasOrdersNew && !hasOrdersUpper) {
+              return new Response(JSON.stringify({ 
+                success: true, 
+                message: 'Migration already completed',
+                tables: currentTables
+              }), {
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+              });
+            }
+            
+            // If we need to complete the migration (have orders_new)
+            if (hasNewSchema && hasOrdersNew) {
+              // Drop any existing orders tables
+              if (hasOrdersUpper) {
+                await env.DB01.prepare('DROP TABLE Orders').run();
+              }
+              if (hasOrdersLower) {
+                await env.DB01.prepare('DROP TABLE orders').run();
+              }
+              
+              // Rename orders_new to orders
+              await env.DB01.prepare('ALTER TABLE orders_new RENAME TO orders').run();
+              
+              return new Response(JSON.stringify({ 
+                success: true, 
+                message: 'Migration completed - renamed orders_new to orders',
+                previousTables: currentTables
+              }), {
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+              });
+            }
+            
+            // Otherwise, create schema from scratch
+            const schemaSQL = `
+              CREATE TABLE IF NOT EXISTS companies (
+                id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+                name TEXT NOT NULL,
+                keap_app_id TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+              );
+
+              CREATE TABLE IF NOT EXISTS contacts (
+                id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+                company_id TEXT REFERENCES companies(id),
+                keap_contact_id TEXT UNIQUE,
+                email TEXT,
+                first_name TEXT,
+                last_name TEXT,
+                phone TEXT,
+                tags TEXT DEFAULT '[]',
+                custom_fields TEXT DEFAULT '{}',
+                lifecycle_stage TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+              );
+
+              CREATE TABLE IF NOT EXISTS products (
+                id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+                company_id TEXT REFERENCES companies(id),
+                keap_product_id TEXT UNIQUE,
+                name TEXT NOT NULL,
+                description TEXT,
+                price DECIMAL(10,2),
+                category TEXT,
+                sku TEXT,
+                active BOOLEAN DEFAULT 1,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+              );
+
+              CREATE TABLE IF NOT EXISTS orders_new (
+                id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+                company_id TEXT REFERENCES companies(id),
+                keap_order_id TEXT UNIQUE,
+                contact_id TEXT REFERENCES contacts(id),
+                total_amount DECIMAL(10,2),
+                status TEXT,
+                order_date DATETIME,
+                products TEXT DEFAULT '[]',
+                shipping_address TEXT DEFAULT '{}',
+                billing_address TEXT DEFAULT '{}',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+              );
+
+              CREATE TABLE IF NOT EXISTS subscriptions (
+                id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+                company_id TEXT REFERENCES companies(id),
+                keap_subscription_id TEXT UNIQUE,
+                contact_id TEXT REFERENCES contacts(id),
+                product_id TEXT REFERENCES products(id),
+                status TEXT,
+                billing_amount DECIMAL(10,2),
+                billing_cycle TEXT,
+                start_date DATETIME,
+                next_billing_date DATETIME,
+                end_date DATETIME,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+              );
+
+              CREATE TABLE IF NOT EXISTS sync_logs (
+                id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+                company_id TEXT REFERENCES companies(id),
+                sync_type TEXT NOT NULL,
+                status TEXT NOT NULL,
+                records_processed INTEGER DEFAULT 0,
+                errors TEXT DEFAULT '[]',
+                started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                completed_at DATETIME
+              );
+            `;
+
+            // Create tables one by one (D1 doesn't support multi-statement exec well)
+            await env.DB01.prepare(`
+              CREATE TABLE IF NOT EXISTS companies (
+                id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+                name TEXT NOT NULL,
+                keap_app_id TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+              )
+            `).run();
+
+            await env.DB01.prepare(`
+              CREATE TABLE IF NOT EXISTS contacts (
+                id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+                company_id TEXT,
+                keap_contact_id TEXT UNIQUE,
+                email TEXT,
+                first_name TEXT,
+                last_name TEXT,
+                phone TEXT,
+                tags TEXT DEFAULT '[]',
+                custom_fields TEXT DEFAULT '{}',
+                lifecycle_stage TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+              )
+            `).run();
+
+            await env.DB01.prepare(`
+              CREATE TABLE IF NOT EXISTS products (
+                id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+                company_id TEXT,
+                keap_product_id TEXT UNIQUE,
+                name TEXT NOT NULL,
+                description TEXT,
+                price DECIMAL(10,2),
+                category TEXT,
+                sku TEXT,
+                active BOOLEAN DEFAULT 1,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+              )
+            `).run();
+
+            await env.DB01.prepare(`
+              CREATE TABLE IF NOT EXISTS orders_new (
+                id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+                company_id TEXT,
+                keap_order_id TEXT UNIQUE,
+                contact_id TEXT,
+                total_amount DECIMAL(10,2),
+                status TEXT,
+                order_date DATETIME,
+                products TEXT DEFAULT '[]',
+                shipping_address TEXT DEFAULT '{}',
+                billing_address TEXT DEFAULT '{}',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+              )
+            `).run();
+
+            await env.DB01.prepare(`
+              CREATE TABLE IF NOT EXISTS subscriptions (
+                id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+                company_id TEXT,
+                keap_subscription_id TEXT UNIQUE,
+                contact_id TEXT,
+                product_id TEXT,
+                status TEXT,
+                billing_amount DECIMAL(10,2),
+                billing_cycle TEXT,
+                start_date DATETIME,
+                next_billing_date DATETIME,
+                end_date DATETIME,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+              )
+            `).run();
+
+            await env.DB01.prepare(`
+              CREATE TABLE IF NOT EXISTS sync_logs (
+                id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+                company_id TEXT,
+                sync_type TEXT NOT NULL,
+                status TEXT NOT NULL,
+                records_processed INTEGER DEFAULT 0,
+                errors TEXT DEFAULT '[]',
+                started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                completed_at DATETIME
+              )
+            `).run();
+
+            // Create indexes
+            const indexStatements = [
+              'CREATE INDEX IF NOT EXISTS idx_contacts_keap_id ON contacts(keap_contact_id)',
+              'CREATE INDEX IF NOT EXISTS idx_contacts_email ON contacts(email)',
+              'CREATE INDEX IF NOT EXISTS idx_orders_contact_id ON orders_new(contact_id)',
+              'CREATE INDEX IF NOT EXISTS idx_orders_date ON orders_new(order_date)',
+              'CREATE INDEX IF NOT EXISTS idx_orders_keap_id ON orders_new(keap_order_id)',
+              'CREATE INDEX IF NOT EXISTS idx_subscriptions_contact_id ON subscriptions(contact_id)',
+              'CREATE INDEX IF NOT EXISTS idx_subscriptions_status ON subscriptions(status)',
+              'CREATE INDEX IF NOT EXISTS idx_sync_logs_type_status ON sync_logs(sync_type, status)'
+            ];
+
+            for (const indexStmt of indexStatements) {
+              await env.DB01.prepare(indexStmt).run();
+            }
+
+            // Create default company
+            const defaultCompanyId = 'default-company';
+            await env.DB01.prepare(`
+              INSERT OR IGNORE INTO companies (id, name, keap_app_id) 
+              VALUES (?, 'Nutrition Solutions', ?)
+            `).bind(defaultCompanyId, env.KEAP_APP_ID || 'default').run();
+
+            // Check what tables already exist
+            const existingTables = await env.DB01.prepare(`
+              SELECT name FROM sqlite_master WHERE type='table'
+            `).all();
+            
+            const tableNames = existingTables.results.map(t => t.name);
+            let migratedCount = 0;
+            
+            console.log('Existing tables:', tableNames);
+            
+            // Check if we need to migrate or if migration is already done
+            if ((tableNames.includes('Orders') || tableNames.includes('orders')) && !tableNames.includes('companies')) {
+              // Old schema exists, need to migrate
+              const tableName = tableNames.includes('Orders') ? 'Orders' : 'orders';
+              const existingOrders = await env.DB01.prepare(`SELECT * FROM ${tableName}`).all();
+              for (const order of existingOrders.results) {
+                // Create contact if needed
+                const contactId = crypto.randomUUID();
+                
+                // Extract contact info from order
+                const firstName = order.order_title?.split(' ')[0] || 'Unknown';
+                const lastName = order.order_title?.split(' ').slice(1).join(' ') || '';
+                
+                await env.DB01.prepare(`
+                  INSERT OR IGNORE INTO contacts (
+                    id, company_id, keap_contact_id, first_name, last_name
+                  ) VALUES (?, ?, ?, ?, ?)
+                `).bind(
+                  contactId,
+                  defaultCompanyId,
+                  order.contact_id?.toString() || 'unknown',
+                  firstName,
+                  lastName
+                ).run();
+                
+                // Get actual contact ID
+                const contact = await env.DB01.prepare(`
+                  SELECT id FROM contacts WHERE keap_contact_id = ?
+                `).bind(order.contact_id?.toString() || 'unknown').first();
+                
+                // Insert order into new table
+                await env.DB01.prepare(`
+                  INSERT OR IGNORE INTO orders_new (
+                    company_id, keap_order_id, contact_id, 
+                    total_amount, status, order_date, products
+                  ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                `).bind(
+                  defaultCompanyId,
+                  order.id?.toString() || crypto.randomUUID(),
+                  contact?.id || contactId,
+                  order.order_total || 0,
+                  order.payment_status || 'unknown',
+                  order.order_date || new Date().toISOString(),
+                  order.order_items || '[]'
+                ).run();
+                
+                migratedCount++;
+              }
+              
+              // Drop old orders table and rename new one
+              await env.DB01.prepare(`DROP TABLE ${tableName}`).run();
+              await env.DB01.prepare('ALTER TABLE orders_new RENAME TO orders').run();
+              migratedCount = existingOrders.results.length;
+            } else if (tableNames.includes('companies') && tableNames.includes('orders_new') && !tableNames.includes('orders')) {
+              // Migration was partially completed, just rename orders_new to orders
+              await env.DB01.prepare('ALTER TABLE orders_new RENAME TO orders').run();
+            } else if (tableNames.includes('companies') && tableNames.includes('orders_new') && (tableNames.includes('Orders') || tableNames.includes('orders'))) {
+              // We have both old and new tables, need to complete migration
+              // Check if there's a lowercase 'orders' table too
+              const hasLowerOrders = tableNames.includes('orders');
+              const hasUpperOrders = tableNames.includes('Orders');
+              
+              // Drop all conflicting tables
+              if (hasUpperOrders) {
+                await env.DB01.prepare(`DROP TABLE Orders`).run();
+              }
+              if (hasLowerOrders) {
+                await env.DB01.prepare(`DROP TABLE orders`).run();
+              }
+              
+              // Now rename orders_new to orders
+              await env.DB01.prepare('ALTER TABLE orders_new RENAME TO orders').run();
+            } else if (tableNames.includes('companies') && tableNames.includes('orders') && !tableNames.includes('orders_new')) {
+              // Migration already completed
+              return new Response(JSON.stringify({ 
+                success: true, 
+                message: 'Migration already completed',
+                existingTables: tableNames
+              }), {
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+              });
+            }
+
+            // Log migration
+            await env.DB01.prepare(`
+              INSERT INTO sync_logs (company_id, sync_type, status, records_processed, completed_at)
+              VALUES (?, 'database_migration', 'completed', ?, CURRENT_TIMESTAMP)
+            `).bind(defaultCompanyId, migratedCount).run();
+
+            return new Response(JSON.stringify({ 
+              success: true, 
+              message: 'Database migration completed successfully',
+              migratedOrders: migratedCount,
+              tablesCreated: ['companies', 'contacts', 'products', 'orders', 'subscriptions', 'sync_logs']
+            }), {
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+          } catch (error) {
+            console.error('Migration error:', error);
+            return new Response(JSON.stringify({ 
+              success: false, 
+              error: error.message,
+              stack: error.stack
+            }), {
+              status: 500,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+          }
+
+        case '/api/sync/contacts':
+          // Sync contacts from Keap
+          try {
+            const keapClientV2 = new KeapClient({ serviceAccountKey: env.KEAP_SERVICE_ACCOUNT_KEY });
+            const dataSync = new DataSync(keapClientV2, env.DB01);
+            const cache = new CacheService(env.CACHE);
+            
+            const result = await dataSync.syncContacts();
+            
+            // Invalidate relevant caches
+            await Promise.all([
+              cache.deletePattern('metrics'),
+              cache.deletePattern('dashboard'),
+              cache.deletePattern('contacts')
+            ]);
+            
+            return new Response(JSON.stringify({
+              success: true,
+              ...result
+            }), {
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+          } catch (error) {
+            console.error('Contact sync error:', error);
+            return new Response(JSON.stringify({
+              success: false,
+              error: error.message
+            }), {
+              status: 500,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+          }
+
+        case '/api/sync/products':
+          // Sync products from Keap
+          try {
+            const keapClientV2 = new KeapClient({ serviceAccountKey: env.KEAP_SERVICE_ACCOUNT_KEY });
+            const dataSync = new DataSync(keapClientV2, env.DB01);
+            
+            const result = await dataSync.syncProducts();
+            
+            return new Response(JSON.stringify({
+              success: true,
+              ...result
+            }), {
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+          } catch (error) {
+            console.error('Product sync error:', error);
+            return new Response(JSON.stringify({
+              success: false,
+              error: error.message
+            }), {
+              status: 500,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+          }
+
+        case '/api/sync/subscriptions':
+          // Sync subscriptions from Keap
+          try {
+            const keapClientV2 = new KeapClient({ serviceAccountKey: env.KEAP_SERVICE_ACCOUNT_KEY });
+            const dataSync = new DataSync(keapClientV2, env.DB01);
+            
+            const result = await dataSync.syncSubscriptions();
+            
+            return new Response(JSON.stringify({
+              success: true,
+              ...result
+            }), {
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+          } catch (error) {
+            console.error('Subscription sync error:', error);
+            return new Response(JSON.stringify({
+              success: false,
+              error: error.message
+            }), {
+              status: 500,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+          }
+
+        case '/api/debug/db-status':
+          // Debug endpoint to check database status
+          const tables = await env.DB01.prepare(`
+            SELECT name FROM sqlite_master WHERE type='table'
+          `).all();
+          
+          const tableStatus = {};
+          for (const table of tables.results) {
+            const count = await env.DB01.prepare(`
+              SELECT COUNT(*) as count FROM ${table.name}
+            `).first();
+            tableStatus[table.name] = count?.count || 0;
+          }
+          
+          return new Response(JSON.stringify({
+            tables: tableStatus,
+            timestamp: new Date().toISOString()
+          }, null, 2), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+
+        case '/api/sync/all':
+          // Sync all data from Keap
+          try {
+            const keapClientV2 = new KeapClient({ serviceAccountKey: env.KEAP_SERVICE_ACCOUNT_KEY });
+            const dataSync = new DataSync(keapClientV2, env.DB01);
+            const cache = new CacheService(env.CACHE);
+            
+            const results = await dataSync.syncAll();
+            
+            // Clear all caches after full sync
+            await Promise.all([
+              cache.deletePattern('metrics'),
+              cache.deletePattern('dashboard'),
+              cache.deletePattern('contacts'),
+              cache.deletePattern('orders'),
+              cache.deletePattern('products'),
+              cache.deletePattern('subscriptions')
+            ]);
+            
+            return new Response(JSON.stringify({
+              success: true,
+              results,
+              summary: {
+                totalSynced: results.reduce((sum, r) => sum + r.synced, 0),
+                totalFailed: results.reduce((sum, r) => sum + r.failed, 0),
+                totalDuration: results.reduce((sum, r) => sum + r.duration, 0)
+              }
+            }), {
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+          } catch (error) {
+            console.error('Full sync error:', error);
+            return new Response(JSON.stringify({
+              success: false,
+              error: error.message
+            }), {
+              status: 500,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+          }
+
+        case '/api/dashboard':
+          // Get comprehensive dashboard data
+          try {
+            const cache = new CacheService(env.CACHE);
+            const { searchParams } = new URL(request.url);
+            const startDate = searchParams.get('start');
+            const endDate = searchParams.get('end');
+            const cacheKey = CacheKeys.dashboard(startDate || undefined, endDate || undefined);
+            
+            // Try cache first
+            const cachedData = await cache.get(cacheKey);
+            if (cachedData) {
+              return new Response(JSON.stringify({
+                ...cachedData,
+                _cached: true,
+                _cachedAt: new Date().toISOString()
+              }), {
+                headers: { 
+                  ...corsHeaders, 
+                  'Content-Type': 'application/json',
+                  'X-Cache': 'HIT'
+                }
+              });
+            }
+            
+            // Get fresh data
+            const dashboardAnalytics = new DashboardAnalytics(env.DB01);
+            const dashboardData = await dashboardAnalytics.getDashboardData(startDate, endDate);
+            
+            // Cache for 5 minutes
+            await cache.set(cacheKey, dashboardData, { ttl: CacheTTL.MEDIUM });
+            
+            return new Response(JSON.stringify({
+              ...dashboardData,
+              _cached: false
+            }), {
+              headers: { 
+                ...corsHeaders, 
+                'Content-Type': 'application/json',
+                'X-Cache': 'MISS'
+              }
+            });
+          } catch (error) {
+            console.error('Dashboard data error:', error);
+            return new Response(JSON.stringify({
+              success: false,
+              error: error.message
+            }), {
+              status: 500,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+          }
+
+        case '/dashboard':
+          // Serve the improved dashboard HTML
+          return new Response(await env.DB01.prepare('SELECT 1').first() ? '' : '', {
+            status: 301,
+            headers: {
+              ...corsHeaders,
+              'Location': '/dashboard-v2.html'
+            }
+          });
+
+        case '/api/webhooks/register':
+          // Register webhooks with Keap
+          if (request.method !== 'POST') {
+            return new Response('Method not allowed', { 
+              status: 405,
+              headers: corsHeaders 
+            });
+          }
+          
+          try {
+            // This would use Keap's webhook registration API
+            // For now, return the configuration needed
+            const webhookConfig = {
+              hookUrl: 'https://d1-starter-sessions-api.megan-d14.workers.dev/api/webhooks/keap',
+              eventKeys: [
+                'contact.add', 'contact.edit', 'contact.delete',
+                'order.add', 'order.edit', 'order.delete',
+                'subscription.add', 'subscription.edit', 'subscription.delete',
+                'product.add', 'product.edit', 'product.delete'
+              ],
+              status: 'To register webhooks, use Keap API with these event keys and hook URL'
+            };
+            
+            return new Response(JSON.stringify(webhookConfig, null, 2), {
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+          } catch (error) {
+            return new Response('Failed to register webhooks', { 
+              status: 500,
+              headers: corsHeaders 
+            });
+          }
+
+        // Real-time dashboard data endpoints using Supabase through Hyperdrive
+        case '/api/dashboard/revenue':
+          try {
+            if (!env.HYPERDRIVE) {
+              throw new Error('Hyperdrive not configured');
+            }
+            
+            const { Client } = await import('pg');
+            const client = new Client({
+              connectionString: env.HYPERDRIVE.connectionString,
+            });
+            
+            await client.connect();
+            
+            const { searchParams } = new URL(request.url);
+            const startDate = searchParams.get('start') || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+            const endDate = searchParams.get('end') || new Date().toISOString().split('T')[0];
+            
+            // Daily revenue query
+            const revenueQuery = `
+              SELECT 
+                DATE(order_date) as date,
+                SUM(total_amount) as revenue,
+                COUNT(*) as order_count
+              FROM orders
+              WHERE order_date >= $1 AND order_date <= $2
+                AND status IN ('paid', 'completed', 'Paid', 'PAID', 'Completed', 'COMPLETED')
+              GROUP BY DATE(order_date)
+              ORDER BY date DESC
+            `;
+            
+            const results = await client.query(revenueQuery, [startDate, endDate]);
+            await client.end();
+            
+            return new Response(JSON.stringify({
+              success: true,
+              data: results.rows || [],
+              period: { start: startDate, end: endDate }
+            }), {
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+          } catch (error) {
+            console.error('Revenue data error:', error);
+            return new Response(JSON.stringify({
+              success: false,
+              error: error.message
+            }), {
+              status: 500,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+          }
+
+        case '/api/dashboard/orders':
+          try {
+            if (!env.HYPERDRIVE) {
+              throw new Error('Hyperdrive not configured');
+            }
+            
+            const { Client } = await import('pg');
+            const client = new Client({
+              connectionString: env.HYPERDRIVE.connectionString,
+            });
+            
+            await client.connect();
+            
+            // Order status distribution
+            const statusQuery = `
+              SELECT 
+                status,
+                COUNT(*) as count,
+                SUM(total_amount) as total_value
+              FROM orders
+              WHERE order_date >= NOW() - INTERVAL '30 days'
+              GROUP BY status
+            `;
+            
+            const statusResults = await client.query(statusQuery);
+            
+            // Recent orders
+            const recentQuery = `
+              SELECT 
+                o.keap_order_id as id,
+                o.contact_name as customer,
+                o.order_date as date,
+                o.total_amount as amount,
+                o.status
+              FROM orders o
+              ORDER BY o.order_date DESC
+              LIMIT 10
+            `;
+            
+            const recentResults = await client.query(recentQuery);
+            await client.end();
+            
+            return new Response(JSON.stringify({
+              success: true,
+              statusDistribution: statusResults.rows || [],
+              recentOrders: recentResults.rows || []
+            }), {
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+          } catch (error) {
+            console.error('Orders data error:', error);
+            return new Response(JSON.stringify({
+              success: false,
+              error: error.message
+            }), {
+              status: 500,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+          }
+
+        case '/api/dashboard/customers':
+          try {
+            if (!env.HYPERDRIVE) {
+              throw new Error('Hyperdrive not configured');
+            }
+            
+            const { Client } = await import('pg');
+            const client = new Client({
+              connectionString: env.HYPERDRIVE.connectionString,
+            });
+            
+            await client.connect();
+            const { searchParams } = new URL(request.url);
+            const days = parseInt(searchParams.get('days') || '7');
+            
+            // Customer growth by day
+            const growthQuery = `
+              SELECT 
+                DATE(created_at) as date,
+                COUNT(*) as new_customers
+              FROM contacts
+              WHERE created_at >= NOW() - INTERVAL '${days} days'
+              GROUP BY DATE(created_at)
+              ORDER BY date DESC
+            `;
+            
+            const results = await client.query(growthQuery);
+            await client.end();
+            
+            return new Response(JSON.stringify({
+              success: true,
+              data: results.rows || [],
+              period: days
+            }), {
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+          } catch (error) {
+            console.error('Customers data error:', error);
+            return new Response(JSON.stringify({
+              success: false,
+              error: error.message
+            }), {
+              status: 500,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+          }
+
+        case '/api/dashboard/products':
+          try {
+            if (!env.HYPERDRIVE) {
+              throw new Error('Hyperdrive not configured');
+            }
+            
+            const { Client } = await import('pg');
+            const client = new Client({
+              connectionString: env.HYPERDRIVE.connectionString,
+            });
+            
+            await client.connect();
+            
+            // Top products by revenue
+            const productsQuery = `
+              SELECT 
+                p.name as product_name,
+                COUNT(DISTINCT o.keap_order_id) as order_count,
+                SUM(o.total_amount) as total_revenue
+              FROM orders o
+              JOIN products p ON p.keap_product_id = ANY(
+                SELECT jsonb_array_elements(o.products::jsonb)->>'product_id'
+              )
+              WHERE o.order_date >= NOW() - INTERVAL '30 days'
+                AND o.status IN ('paid', 'completed', 'Paid', 'PAID', 'Completed', 'COMPLETED')
+              GROUP BY p.name
+              ORDER BY total_revenue DESC
+              LIMIT 10
+            `;
+            
+            const results = await client.query(productsQuery);
+            await client.end();
+            
+            return new Response(JSON.stringify({
+              success: true,
+              data: results.rows || []
+            }), {
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+          } catch (error) {
+            console.error('Products data error:', error);
+            return new Response(JSON.stringify({
+              success: false,
+              error: error.message
+            }), {
+              status: 500,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+          }
+
+        case '/api/dashboard/subscriptions':
+          try {
+            if (!env.HYPERDRIVE) {
+              throw new Error('Hyperdrive not configured');
+            }
+            
+            const { Client } = await import('pg');
+            const client = new Client({
+              connectionString: env.HYPERDRIVE.connectionString,
+            });
+            
+            await client.connect();
+            
+            // Active subscriptions and MRR
+            const subsQuery = `
+              SELECT 
+                COUNT(*) FILTER (WHERE status = 'active') as active_count,
+                SUM(billing_amount) FILTER (WHERE status = 'active') as mrr,
+                COUNT(*) FILTER (WHERE status = 'paused') as paused_count,
+                COUNT(*) FILTER (WHERE status = 'cancelled') as cancelled_count
+              FROM subscriptions
+            `;
+            
+            const results = await client.query(subsQuery);
+            
+            // Recent subscriptions
+            const recentQuery = `
+              SELECT 
+                contact_name as customer,
+                product_name as product,
+                billing_amount as amount,
+                billing_cycle as cycle,
+                next_bill_date,
+                status
+              FROM subscriptions
+              WHERE status = 'active'
+              ORDER BY created_at DESC
+              LIMIT 10
+            `;
+            
+            const recentResults = await client.query(recentQuery);
+            await client.end();
+            
+            return new Response(JSON.stringify({
+              success: true,
+              metrics: results.rows[0] || {},
+              recentSubscriptions: recentResults.rows || []
+            }), {
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+          } catch (error) {
+            console.error('Subscriptions data error:', error);
+            return new Response(JSON.stringify({
+              success: false,
+              error: error.message
+            }), {
+              status: 500,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+          }
+
+        case '/api/webhooks/keap':
+          // Handle Keap webhooks for real-time updates
+          if (request.method !== 'POST') {
+            return new Response('Method not allowed', {
+              status: 405,
+              headers: corsHeaders
+            });
+          }
+
+          try {
+            const payload = await request.json() as WebhookPayload;
+            console.log('Received webhook:', payload);
+
+            // Initialize webhook handler
+            const keapClient = new KeapClient({ serviceAccountKey: env.KEAP_SERVICE_ACCOUNT_KEY });
+            const dataSync = new DataSync(keapClient, env.DB01);
+            const cache = new CacheService(env.CACHE);
+            const webhookHandler = new WebhookHandler(env.DB01, cache, dataSync);
+
+            // Process webhook
+            await webhookHandler.handleWebhook(payload);
+
+            // Also trigger real-time broadcast if we have SSE clients
+            // This will be implemented in the next phase
+            
+            return new Response(JSON.stringify({
+              success: true,
+              message: 'Webhook processed successfully'
+            }), {
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+          } catch (error) {
+            console.error('Webhook error:', error);
+            return new Response(JSON.stringify({
+              success: false,
+              error: error.message
+            }), {
+              status: 500,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+          }
+
+        default:
+          return new Response(JSON.stringify({ error: 'Not Found', available_endpoints: [
+            '/',
+            '/dashboard',
+            '/keap-orders',
+            '/api/metrics', 
+            '/api/sync-orders',
+            '/api/migrate',
+            '/api/tables',
+            '/api/sync/contacts',
+            '/api/sync/products',
+            '/api/sync/subscriptions',
+            '/api/sync/all',
+            '/api/webhooks/keap',
+            '/api/dashboard',
+            '/api/dashboard/revenue',
+            '/api/dashboard/orders',
+            '/api/dashboard/customers',
+            '/api/dashboard/products',
+            '/api/dashboard/subscriptions',
+            '/api/webhooks/keap',
+            '/api/webhooks/register'
+          ] }), {
+            status: 404,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
       }
-      
-      // Incremental sync (triggered by cron or manually)
-      if (pathname === '/sync') {
-        const lastSync = await analytics.getLastSyncTimestamp();
-        const newOrders = await keapClient.getOrdersSince(lastSync);
-        
-        if (newOrders.length > 0) {
-          await analytics.batchInsertOrders(newOrders);
-          await analytics.updateSyncTimestamp(new Date().toISOString());
-        }
-        
-        return new Response(JSON.stringify({
-          status: 'Sync completed',
-          new_orders: newOrders.length,
-          last_sync: lastSync
-        }), {
-          headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
-      }
-      
-      // Lightning-fast dashboard metrics
-      if (pathname === '/api/dashboard') {
-        const metrics = await analytics.getDashboardMetrics();
-        return new Response(JSON.stringify(metrics), {
-          headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
-      }
-      
-      if (pathname === '/api/revenue') {
-        const revenue = await analytics.getRevenueByMonth();
-        return new Response(JSON.stringify(revenue), {
-          headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
-      }
-      
-      if (pathname === '/api/products') {
-        const limit = parseInt(url.searchParams.get('limit') || '10');
-        const products = await analytics.getTopProducts(limit);
-        return new Response(JSON.stringify(products), {
-          headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
-      }
-      
-      // Super-fast dashboard HTML
-      if (pathname === '/' || pathname === '/dashboard') {
-        return new Response(getDashboardHTML(), {
-          headers: { 'Content-Type': 'text/html', ...corsHeaders }
-        });
-      }
-      
-      return new Response('Not Found', { status: 404, headers: corsHeaders });
-      
     } catch (error) {
       console.error('Worker error:', error);
-      return new Response(JSON.stringify({
-        error: 'Internal Server Error',
-        message: error.message
+      return new Response(JSON.stringify({ 
+        error: error.message,
+        stack: error.stack,
+        endpoint: url.pathname
       }), {
         status: 500,
-        headers: { 'Content-Type': 'application/json', ...corsHeaders }
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       });
-    }
-  },
-  
-  // Cron trigger for automatic syncing
-  async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
-    const analytics = new FastAnalytics(env.ORDERS_DB, env.CONFIG_KV);
-    const keapClient = new KeapApiClient(env);
-    
-    try {
-      const lastSync = await analytics.getLastSyncTimestamp();
-      const newOrders = await keapClient.getOrdersSince(lastSync);
-      
-      if (newOrders.length > 0) {
-        await analytics.batchInsertOrders(newOrders);
-        await analytics.updateSyncTimestamp(new Date().toISOString());
-        console.log(`Synced ${newOrders.length} new orders`);
-      }
-    } catch (error) {
-      console.error('Sync error:', error);
     }
   }
 };
 
-function getDashboardHTML(): string {
+function generateMainDashboard(): string {
   return `
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>🥗 Nutrition Solutions Analytics - Replacing Grow.com</title>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <title>Nutrition Solutions Data Hub</title>
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { 
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; 
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-        }
-        .header { 
-            background: rgba(255,255,255,0.1); 
-            backdrop-filter: blur(10px);
-            color: white; 
-            padding: 1.5rem 2rem; 
-            border-bottom: 1px solid rgba(255,255,255,0.2);
-        }
-        .header h1 { 
-            font-size: 1.8rem; 
-            font-weight: 700; 
-            display: flex; 
-            align-items: center; 
-            gap: 0.5rem;
-        }
-        .savings-badge {
-            background: linear-gradient(45deg, #10b981, #059669);
-            padding: 0.5rem 1rem;
-            border-radius: 20px;
-            font-size: 0.875rem;
-            font-weight: 600;
-            margin-left: auto;
-            animation: pulse 2s infinite;
-        }
-        @keyframes pulse {
-            0%, 100% { transform: scale(1); }
-            50% { transform: scale(1.05); }
-        }
-        .container { max-width: 1400px; margin: 0 auto; padding: 2rem; }
-        .metrics { 
-            display: grid; 
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); 
-            gap: 1.5rem; 
-            margin-bottom: 2rem; 
-        }
-        .metric-card { 
-            background: rgba(255,255,255,0.95); 
-            padding: 2rem; 
-            border-radius: 16px; 
-            box-shadow: 0 8px 32px rgba(0,0,0,0.1);
-            backdrop-filter: blur(10px);
-            border: 1px solid rgba(255,255,255,0.2);
-        }
-        .metric-value { 
-            font-size: 2.5rem; 
-            font-weight: 800; 
-            background: linear-gradient(45deg, #667eea, #764ba2);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-        }
-        .metric-label { 
-            color: #6b7280; 
-            font-size: 0.875rem; 
-            margin-top: 0.5rem; 
-            font-weight: 500;
-        }
-        .charts { 
-            display: grid; 
-            grid-template-columns: 1fr 1fr; 
-            gap: 2rem; 
-            margin-bottom: 2rem; 
-        }
-        .chart-container { 
-            background: rgba(255,255,255,0.95); 
-            padding: 2rem; 
-            border-radius: 16px; 
-            box-shadow: 0 8px 32px rgba(0,0,0,0.1);
-            backdrop-filter: blur(10px);
-        }
-        .chart-container h3 { 
-            margin-bottom: 1.5rem; 
-            color: #374151; 
-            font-weight: 600;
-        }
-        .loading { 
-            text-align: center; 
-            padding: 4rem; 
-            color: white; 
-            font-size: 1.2rem;
-        }
-        .sync-button { 
-            background: linear-gradient(45deg, #3b82f6, #1d4ed8); 
-            color: white; 
-            border: none; 
-            padding: 0.75rem 1.5rem; 
-            border-radius: 8px; 
-            cursor: pointer; 
-            font-weight: 600;
-            transition: all 0.3s ease;
-        }
-        .sync-button:hover { 
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
-        }
-        .status-indicator {
-            display: inline-block;
-            width: 8px;
-            height: 8px;
-            background: #10b981;
-            border-radius: 50%;
-            margin-right: 0.5rem;
-            animation: pulse 2s infinite;
-        }
-        
-        @media (max-width: 768px) {
-            .charts { grid-template-columns: 1fr; }
-            .metric-value { font-size: 2rem; }
-        }
+        body { font-family: system-ui; margin: 40px; background: #f5f5f5; }
+        .container { max-width: 1000px; margin: 0 auto; }
+        .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; border-radius: 10px; margin-bottom: 30px; }
+        .endpoints { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
+        .endpoint { background: white; padding: 25px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .endpoint h3 { color: #333; margin-bottom: 15px; }
+        .endpoint p { color: #666; margin-bottom: 15px; }
+        .btn { background: #667eea; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block; }
+        .btn:hover { background: #5a6fd8; }
+        .status { padding: 10px; background: #e8f5e8; border: 1px solid #4caf50; border-radius: 5px; margin-top: 10px; }
     </style>
 </head>
 <body>
-    <div class="header">
-        <div style="display: flex; justify-content: space-between; align-items: center;">
-            <h1>🥗 Nutrition Solutions Analytics</h1>
-            <div class="savings-badge">
-                💰 Saving $40,560/year
-            </div>
-        </div>
-        <div style="margin-top: 0.5rem; font-size: 0.875rem; opacity: 0.9;">
-            <span class="status-indicator"></span>
-            Lightning-fast analytics • Sub-100ms queries • 99.9% uptime
-        </div>
-    </div>
-    
     <div class="container">
-        <div id="loading" class="loading">
-            ⚡ Loading your lightning-fast analytics...
+        <div class="header">
+            <h1>🚀 Nutrition Solutions Data Hub</h1>
+            <p>Your unified data platform - Lightning fast analytics & AI-powered insights</p>
+            <div style="margin-top: 20px;">
+                <a href="/dashboard" class="btn" style="background: white; color: #667eea; padding: 12px 30px; font-size: 18px; font-weight: 600; border-radius: 8px; text-decoration: none; display: inline-block;">
+                    📊 View Analytics Dashboard
+                </a>
+            </div>
         </div>
         
-        <div id="dashboard" style="display: none;">
-            <div class="metrics" id="metricsContainer">
-                <!-- Metrics populated by JavaScript -->
+        <div class="endpoints">
+            <div class="endpoint">
+                <h3>📊 Live Keap Orders</h3>
+                <p>Real-time order data directly from Keap API</p>
+                <a href="/keap-orders" class="btn">View Orders JSON</a>
+                <div class="status">✅ Fixed endpoint - should work now!</div>
             </div>
             
-            <div class="charts">
-                <div class="chart-container">
-                    <h3>📈 Revenue Trend (Last 12 Months)</h3>
-                    <canvas id="revenueChart"></canvas>
-                </div>
-                <div class="chart-container">
-                    <h3>🏆 Top Products by Revenue</h3>
-                    <canvas id="productsChart"></canvas>
-                </div>
+            <div class="endpoint">
+                <h3>⚡ Sync to Database</h3>
+                <p>Import Keap orders into D1 for lightning-fast analytics</p>
+                <a href="/api/sync-orders" class="btn">Sync Orders</a>
+                <div class="status">🔄 Creates local copy for speed</div>
             </div>
             
-            <div style="text-align: center;">
-                <button class="sync-button" onclick="syncData()">
-                    🔄 Sync Latest Data
-                </button>
+            <div class="endpoint">
+                <h3>📈 Analytics Metrics</h3>
+                <p>Business intelligence from your local database</p>
+                <a href="/api/metrics" class="btn">View Metrics</a>
+                <div class="status">💡 Replaces Grow.com functionality</div>
             </div>
+            
+            <div class="endpoint">
+                <h3>🔧 Database Migration</h3>
+                <p>Upgrade to new schema with contacts, products & subscriptions</p>
+                <a href="/api/migrate" class="btn">Run Migration</a>
+                <div class="status">🆕 One-time setup for full functionality</div>
+            </div>
+        </div>
+        
+        <h2 style="margin-top: 40px; color: #333;">🔄 Data Sync Operations</h2>
+        <div class="endpoints">
+            <div class="endpoint">
+                <h3>👥 Sync Contacts</h3>
+                <p>Import all contacts from Keap CRM</p>
+                <a href="/api/sync/contacts" class="btn">Sync Contacts</a>
+                <div class="status">Import customer data</div>
+            </div>
+            
+            <div class="endpoint">
+                <h3>📦 Sync Products</h3>
+                <p>Import product catalog from Keap</p>
+                <a href="/api/sync/products" class="btn">Sync Products</a>
+                <div class="status">Import product data</div>
+            </div>
+            
+            <div class="endpoint">
+                <h3>🔁 Sync Subscriptions</h3>
+                <p>Import subscription data from Keap</p>
+                <a href="/api/sync/subscriptions" class="btn">Sync Subscriptions</a>
+                <div class="status">Import recurring revenue</div>
+            </div>
+            
+            <div class="endpoint">
+                <h3>🚀 Full Sync</h3>
+                <p>Sync all data types in one operation</p>
+                <a href="/api/sync/all" class="btn">Sync Everything</a>
+                <div class="status">Complete data import</div>
+            </div>
+        </div>
+        
+        <div style="background: white; padding: 25px; border-radius: 10px; margin-top: 30px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+            <h3>🎯 Next Steps</h3>
+            <ol>
+                <li><strong>Test the fix:</strong> Click "View Orders JSON" above</li>
+                <li><strong>Sync your data:</strong> Click "Sync Orders" to create local copy</li>
+                <li><strong>View analytics:</strong> Click "View Metrics" to see your dashboard</li>
+                <li><strong>Scale up:</strong> Ready to replace Grow.com and save $3,400/month</li>
+            </ol>
         </div>
     </div>
-
-    <script>
-        let revenueChart, productsChart;
-        
-        async function loadDashboard() {
-            try {
-                const [dashboard, revenue, products] = await Promise.all([
-                    fetch('/api/dashboard').then(r => r.json()),
-                    fetch('/api/revenue').then(r => r.json()),
-                    fetch('/api/products?limit=5').then(r => r.json())
-                ]);
-                
-                renderMetrics(dashboard);
-                renderRevenueChart(revenue.results || []);
-                renderProductsChart(products.results || []);
-                
-                document.getElementById('loading').style.display = 'none';
-                document.getElementById('dashboard').style.display = 'block';
-                
-            } catch (error) {
-                console.error('Dashboard load error:', error);
-                document.getElementById('loading').innerHTML = '❌ Failed to load dashboard. <button onclick="loadDashboard()">Retry</button>';
-            }
-        }
-        
-        function renderMetrics(data) {
-            const metrics = [
-                { label: 'Total Revenue', value: formatCurrency(data.total_revenue || 0), icon: '💰' },
-                { label: 'Total Orders', value: (data.total_orders || 0).toLocaleString(), icon: '📦' },
-                { label: 'Avg Order Value', value: formatCurrency(data.avg_order_value || 0), icon: '📊' },
-                { label: 'Unique Customers', value: (data.unique_customers || 0).toLocaleString(), icon: '👥' },
-                { label: 'Orders Today', value: (data.orders_today || 0).toLocaleString(), icon: '🚀' },
-                { label: 'Orders This Week', value: (data.orders_week || 0).toLocaleString(), icon: '📅' },
-                { label: 'Orders This Month', value: (data.orders_month || 0).toLocaleString(), icon: '📈' },
-                { label: 'Paid Revenue', value: formatCurrency(data.paid_revenue || 0), icon: '✅' }
-            ];
-            
-            const container = document.getElementById('metricsContainer');
-            container.innerHTML = metrics.map(metric => 
-                \`<div class="metric-card">
-                    <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
-                        <span style="font-size: 1.5rem;">\${metric.icon}</span>
-                        <div class="metric-label">\${metric.label}</div>
-                    </div>
-                    <div class="metric-value">\${metric.value}</div>
-                </div>\`
-            ).join('');
-        }
-        
-        function renderRevenueChart(data) {
-            const ctx = document.getElementById('revenueChart').getContext('2d');
-            
-            if (revenueChart) revenueChart.destroy();
-            
-            revenueChart = new Chart(ctx, {
-                type: 'line',
-                data: {
-                    labels: data.map(d => d.month),
-                    datasets: [{
-                        label: 'Revenue',
-                        data: data.map(d => d.revenue),
-                        borderColor: '#667eea',
-                        backgroundColor: 'rgba(102, 126, 234, 0.1)',
-                        tension: 0.4,
-                        fill: true,
-                        pointBackgroundColor: '#667eea',
-                        pointBorderColor: '#fff',
-                        pointBorderWidth: 2
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    plugins: {
-                        legend: { display: false }
-                    },
-                    scales: {
-                        y: {
-                            beginAtZero: true,
-                            ticks: {
-                                callback: value => '$' + value.toLocaleString()
-                            }
-                        }
-                    }
-                }
-            });
-        }
-        
-        function renderProductsChart(data) {
-            const ctx = document.getElementById('productsChart').getContext('2d');
-            
-            if (productsChart) productsChart.destroy();
-            
-            const colors = ['#667eea', '#764ba2', '#f093fb', '#f5576c', '#4facfe'];
-            
-            productsChart = new Chart(ctx, {
-                type: 'doughnut',
-                data: {
-                    labels: data.map(d => d.product_name),
-                    datasets: [{
-                        data: data.map(d => d.total_revenue),
-                        backgroundColor: colors,
-                        borderWidth: 0
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    plugins: {
-                        legend: { 
-                            position: 'bottom',
-                            labels: { padding: 20 }
-                        }
-                    }
-                }
-            });
-        }
-        
-        async function syncData() {
-            const button = document.querySelector('.sync-button');
-            const originalText = button.innerHTML;
-            
-            button.innerHTML = '⏳ Syncing...';
-            button.disabled = true;
-            
-            try {
-                const response = await fetch('/sync');
-                const result = await response.json();
-                
-                if (result.new_orders > 0) {
-                    await loadDashboard(); // Reload data
-                    button.innerHTML = \`✅ Synced \${result.new_orders} orders\`;
-                } else {
-                    button.innerHTML = '✅ Already up to date';
-                }
-                
-                setTimeout(() => {
-                    button.innerHTML = originalText;
-                    button.disabled = false;
-                }, 2000);
-                
-            } catch (error) {
-                button.innerHTML = '❌ Sync failed';
-                button.style.background = '#ef4444';
-                
-                setTimeout(() => {
-                    button.innerHTML = originalText;
-                    button.disabled = false;
-                    button.style.background = '';
-                }, 2000);
-            }
-        }
-        
-        function formatCurrency(value) {
-            return new Intl.NumberFormat('en-US', {
-                style: 'currency',
-                currency: 'USD'
-            }).format(value);
-        }
-        
-        // Auto-refresh every 5 minutes
-        setInterval(loadDashboard, 5 * 60 * 1000);
-        
-        // Load dashboard on page load
-        loadDashboard();
-    </script>
 </body>
-</html>`;
+</html>
+  `;
 }

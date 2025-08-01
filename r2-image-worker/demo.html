@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>R2 Image Worker Demo</title>
+    <style>
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .upload-area {
+            border: 2px dashed #ddd;
+            border-radius: 10px;
+            padding: 40px;
+            text-align: center;
+            margin: 20px 0;
+            background: #fafafa;
+        }
+        .upload-area.dragover {
+            border-color: #667eea;
+            background: #f0f4ff;
+        }
+        input[type="text"], input[type="password"] {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+        button {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background: #5a6fd8;
+        }
+        .result {
+            margin: 20px 0;
+            padding: 15px;
+            border-radius: 5px;
+            background: #e8f5e8;
+            border: 1px solid #4caf50;
+        }
+        .error {
+            background: #ffe8e8;
+            border-color: #f44336;
+        }
+        .images-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+        }
+        .image-item {
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            overflow: hidden;
+            background: white;
+        }
+        .image-item img {
+            width: 100%;
+            height: 150px;
+            object-fit: cover;
+        }
+        .image-info {
+            padding: 10px;
+            font-size: 12px;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🖼️ R2 Image Worker Demo</h1>
+        <p>Test the image upload and management functionality of the R2 worker.</p>
+        
+        <div class="auth-section">
+            <h3>Authentication</h3>
+            <input type="password" id="authKey" placeholder="Enter your AUTH_KEY_SECRET" />
+        </div>
+
+        <div class="upload-section">
+            <h3>Upload Image</h3>
+            <div class="upload-area" id="uploadArea">
+                <p>🎯 Drop an image here or click to select</p>
+                <input type="file" id="fileInput" accept="image/*" style="display: none;" />
+            </div>
+            <button onclick="document.getElementById('fileInput').click()">Select Image</button>
+            <button onclick="uploadImage()">Upload</button>
+        </div>
+
+        <div class="actions-section">
+            <h3>Actions</h3>
+            <button onclick="listImages()">List Images</button>
+            <button onclick="clearResults()">Clear Results</button>
+        </div>
+
+        <div id="results"></div>
+
+        <div class="images-section">
+            <h3>Images</h3>
+            <div id="imagesGrid" class="images-grid"></div>
+        </div>
+    </div>
+
+    <script>
+        const WORKER_URL = 'https://r2-image-worker.megan-d14.workers.dev';
+        let selectedFile = null;
+
+        // File input handling
+        document.getElementById('fileInput').addEventListener('change', function(e) {
+            selectedFile = e.target.files[0];
+            if (selectedFile) {
+                document.getElementById('uploadArea').innerHTML = 
+                    `<p>✅ Selected: ${selectedFile.name} (${(selectedFile.size/1024).toFixed(1)} KB)</p>`;
+            }
+        });
+
+        // Drag and drop handling
+        const uploadArea = document.getElementById('uploadArea');
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
+
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                selectedFile = files[0];
+                uploadArea.innerHTML = 
+                    `<p>✅ Selected: ${selectedFile.name} (${(selectedFile.size/1024).toFixed(1)} KB)</p>`;
+            }
+        });
+
+        // Upload image
+        async function uploadImage() {
+            const authKey = document.getElementById('authKey').value;
+            if (!authKey) {
+                showResult('Please enter your auth key', 'error');
+                return;
+            }
+
+            if (!selectedFile) {
+                showResult('Please select a file', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${WORKER_URL}/${selectedFile.name}`, {
+                    method: 'PUT',
+                    headers: {
+                        'X-Custom-Auth-Key': authKey,
+                        'Content-Type': selectedFile.type
+                    },
+                    body: selectedFile
+                });
+
+                const result = await response.json();
+                if (response.ok) {
+                    showResult(`✅ Upload successful!<br>URL: ${result.url}`, 'success');
+                    listImages(); // Refresh the image list
+                } else {
+                    showResult(`❌ Upload failed: ${result.error || 'Unknown error'}`, 'error');
+                }
+            } catch (error) {
+                showResult(`❌ Error: ${error.message}`, 'error');
+            }
+        }
+
+        // List images
+        async function listImages() {
+            const authKey = document.getElementById('authKey').value;
+            if (!authKey) {
+                showResult('Please enter your auth key to list images', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${WORKER_URL}/list`, {
+                    method: 'POST',
+                    headers: {
+                        'X-Custom-Auth-Key': authKey,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ limit: 50 })
+                });
+
+                const result = await response.json();
+                if (response.ok) {
+                    showResult(`📋 Found ${result.images.length} images`, 'success');
+                    displayImages(result.images);
+                } else {
+                    showResult(`❌ List failed: ${result.error || 'Unknown error'}`, 'error');
+                }
+            } catch (error) {
+                showResult(`❌ Error: ${error.message}`, 'error');
+            }
+        }
+
+        // Display images in grid
+        function displayImages(images) {
+            const grid = document.getElementById('imagesGrid');
+            grid.innerHTML = '';
+
+            images.forEach(image => {
+                const item = document.createElement('div');
+                item.className = 'image-item';
+                item.innerHTML = `
+                    <img src="${image.url}" alt="${image.key}" onerror="this.src='data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjE1MCIgdmlld0JveD0iMCAwIDIwMCAxNTAiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxyZWN0IHdpZHRoPSIyMDAiIGhlaWdodD0iMTUwIiBmaWxsPSIjZjBmMGYwIi8+Cjx0ZXh0IHg9IjEwMCIgeT0iNzUiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZpbGw9IiM5OTkiPkltYWdlPC90ZXh0Pgo8L3N2Zz4K'" />
+                    <div class="image-info">
+                        <strong>${image.key}</strong><br>
+                        Size: ${(image.size/1024).toFixed(1)} KB<br>
+                        Uploaded: ${new Date(image.uploaded).toLocaleDateString()}
+                        <br><button onclick="copyUrl('${image.url}')" style="font-size: 10px; padding: 4px 8px;">Copy URL</button>
+                        <button onclick="deleteImage('${image.key}')" style="font-size: 10px; padding: 4px 8px; background: #f44336;">Delete</button>
+                    </div>
+                `;
+                grid.appendChild(item);
+            });
+        }
+
+        // Copy URL to clipboard
+        function copyUrl(url) {
+            navigator.clipboard.writeText(url).then(() => {
+                showResult('✅ URL copied to clipboard!', 'success');
+            });
+        }
+
+        // Delete image
+        async function deleteImage(key) {
+            const authKey = document.getElementById('authKey').value;
+            if (!confirm(`Delete ${key}?`)) return;
+
+            try {
+                const response = await fetch(`${WORKER_URL}/${key}`, {
+                    method: 'DELETE',
+                    headers: {
+                        'X-Custom-Auth-Key': authKey
+                    }
+                });
+
+                const result = await response.json();
+                if (response.ok) {
+                    showResult(`✅ Deleted ${key}`, 'success');
+                    listImages(); // Refresh the list
+                } else {
+                    showResult(`❌ Delete failed: ${result.error || 'Unknown error'}`, 'error');
+                }
+            } catch (error) {
+                showResult(`❌ Error: ${error.message}`, 'error');
+            }
+        }
+
+        // Show result message
+        function showResult(message, type = 'success') {
+            const results = document.getElementById('results');
+            const div = document.createElement('div');
+            div.className = `result ${type === 'error' ? 'error' : ''}`;
+            div.innerHTML = message;
+            results.appendChild(div);
+            
+            // Auto-remove after 5 seconds
+            setTimeout(() => div.remove(), 5000);
+        }
+
+        // Clear results
+        function clearResults() {
+            document.getElementById('results').innerHTML = '';
+        }
+
+        // Load images on page load
+        window.addEventListener('load', () => {
+            // Only list images if auth key is provided
+            const authKey = document.getElementById('authKey').value;
+            if (authKey) {
+                listImages();
+            }
+        });
+    </script>
+</body>
+</html>

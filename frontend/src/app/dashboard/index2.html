@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nutrition Solutions Data Hub</title>
+    <style>
+        body { font-family: system-ui; margin: 40px; background: #f5f5f5; }
+        .container { max-width: 1000px; margin: 0 auto; }
+        .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; border-radius: 10px; margin-bottom: 30px; }
+        .endpoints { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
+        .endpoint { background: white; padding: 25px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .endpoint h3 { color: #333; margin-bottom: 15px; }
+        .endpoint p { color: #666; margin-bottom: 15px; }
+        .btn { background: #667eea; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block; }
+        .btn:hover { background: #5a6fd8; }
+        .status { padding: 10px; background: #e8f5e8; border: 1px solid #4caf50; border-radius: 5px; margin-top: 10px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🚀 Nutrition Solutions Data Hub</h1>
+            <p>Your unified data platform - Lightning fast analytics & AI-powered insights</p>
+        </div>
+        
+        <div class="endpoints">
+            <div class="endpoint">
+                <h3>📊 Live Keap Orders</h3>
+                <p>Real-time order data directly from Keap API</p>
+                <a href="/keap-orders" class="btn">View Orders JSON</a>
+                <div class="status">✅ Fixed endpoint - should work now!</div>
+            </div>
+            
+            <div class="endpoint">
+                <h3>⚡ Sync to Database</h3>
+                <p>Import Keap orders into D1 for lightning-fast analytics</p>
+                <a href="/api/sync-orders" class="btn">Sync Orders</a>
+                <div class="status">🔄 Creates local copy for speed</div>
+            </div>
+            
+            <div class="endpoint">
+                <h3>📈 Analytics Dashboard</h3>
+                <p>Business intelligence from your local database</p>
+                <a href="/dashboard-v2.html" class="btn">View Dashboard</a>
+                <div class="status">💡 Replaces Grow.com functionality</div>
+            </div>
+        </div>
+        
+        <div style="background: white; padding: 25px; border-radius: 10px; margin-top: 30px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+            <h3>🎯 Next Steps</h3>
+            <ol>
+                <li><strong>Test the fix:</strong> Click "View Orders JSON" above</li>
+                <li><strong>Sync your data:</strong> Click "Sync Orders" to create local copy</li>
+                <li><strong>View analytics:</strong> Click "View Metrics" to see your dashboard</li>
+                <li><strong>Scale up:</strong> Ready to replace Grow.com and save $3,400/month</li>
+            </ol>
+        </div>
+    </div>
+</body>
+</html>

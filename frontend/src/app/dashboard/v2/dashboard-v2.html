@@ -1,0 +1,851 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nutrition Solutions Analytics Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        /* Reset and Base Styles */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html, body {
+            height: 100%;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: #f5f7fa;
+            color: #333;
+            line-height: 1.6;
+            font-size: 16px;
+        }
+
+        /* Container */
+        .main-container {
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Header */
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 1.5rem;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        .header-content {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .header h1 {
+            font-size: 1.75rem;
+            font-weight: 600;
+            margin-bottom: 0.25rem;
+        }
+
+        .header p {
+            font-size: 0.95rem;
+            opacity: 0.9;
+        }
+
+        .header-controls {
+            margin-top: 1rem;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 1rem;
+            align-items: center;
+        }
+
+        .date-range {
+            display: flex;
+            gap: 0.5rem;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .date-range input {
+            padding: 0.5rem 1rem;
+            border: none;
+            border-radius: 5px;
+            font-size: 14px;
+            background: rgba(255,255,255,0.9);
+        }
+
+        .btn {
+            background: white;
+            color: #667eea;
+            padding: 0.5rem 1.5rem;
+            border: none;
+            border-radius: 5px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-size: 14px;
+            white-space: nowrap;
+        }
+
+        .btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        /* Content Container */
+        .content {
+            flex: 1;
+            padding: 1.5rem;
+            max-width: 1400px;
+            margin: 0 auto;
+            width: 100%;
+        }
+
+        /* Sync Status Bar */
+        .sync-status {
+            background: white;
+            padding: 1rem;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+            margin-bottom: 1.5rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 1rem;
+        }
+
+        .sync-info {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.9rem;
+        }
+
+        .sync-indicator {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #10b981;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
+            70% { box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+        }
+
+        /* Metrics Grid */
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .metric-card {
+            background: white;
+            padding: 1.25rem;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .metric-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 16px rgba(0,0,0,0.1);
+        }
+
+        .metric-card .icon {
+            position: absolute;
+            right: 1rem;
+            top: 1rem;
+            font-size: 1.5rem;
+            opacity: 0.1;
+        }
+
+        .metric-card h3 {
+            color: #666;
+            font-size: 0.8rem;
+            font-weight: 500;
+            margin-bottom: 0.25rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .metric-card .value {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: #333;
+            margin-bottom: 0.25rem;
+        }
+
+        .metric-card .change {
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+
+        .metric-card .change.positive { color: #10b981; }
+        .metric-card .change.negative { color: #ef4444; }
+
+        /* Charts Grid */
+        .charts-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .chart-container {
+            background: white;
+            padding: 1.25rem;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        }
+
+        .chart-container h3 {
+            font-size: 1rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+            color: #333;
+        }
+
+        .chart-wrapper {
+            position: relative;
+            height: 250px;
+        }
+
+        /* Tables */
+        .table-container {
+            background: white;
+            padding: 1.25rem;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+            margin-bottom: 1.5rem;
+            overflow: hidden;
+        }
+
+        .table-container h3 {
+            font-size: 1rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+            color: #333;
+        }
+
+        .table-wrapper {
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            min-width: 500px;
+        }
+
+        th, td {
+            text-align: left;
+            padding: 0.75rem;
+            border-bottom: 1px solid #e5e7eb;
+            font-size: 0.875rem;
+        }
+
+        th {
+            font-weight: 600;
+            color: #666;
+            text-transform: uppercase;
+            font-size: 0.75rem;
+            letter-spacing: 0.5px;
+            background: #f9fafb;
+        }
+
+        tr:hover {
+            background: #f9fafb;
+        }
+
+        /* Status Badge */
+        .status-badge {
+            display: inline-block;
+            padding: 0.2rem 0.6rem;
+            border-radius: 12px;
+            font-size: 0.7rem;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .status-badge.active {
+            background: #d1fae5;
+            color: #065f46;
+        }
+
+        .status-badge.inactive {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+
+        .status-badge.paid {
+            background: #d1fae5;
+            color: #065f46;
+        }
+
+        /* Loading State */
+        .loading {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 200px;
+            color: #666;
+        }
+
+        .spinner {
+            border: 2px solid #f3f3f3;
+            border-top: 2px solid #667eea;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            animation: spin 1s linear infinite;
+            display: inline-block;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* Error State */
+        .error-message {
+            background: #fee2e2;
+            color: #991b1b;
+            padding: 1rem;
+            border-radius: 8px;
+            margin: 1rem 0;
+            text-align: center;
+        }
+
+        /* Responsive Design */
+        @media (max-width: 768px) {
+            .header h1 {
+                font-size: 1.5rem;
+            }
+            
+            .header-controls {
+                justify-content: center;
+            }
+            
+            .date-range {
+                width: 100%;
+                justify-content: center;
+            }
+            
+            .date-range input {
+                flex: 1;
+                min-width: 120px;
+            }
+            
+            .metrics-grid {
+                grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            }
+            
+            .metric-card .value {
+                font-size: 1.25rem;
+            }
+            
+            .charts-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .sync-status {
+                flex-direction: column;
+                text-align: center;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .content {
+                padding: 1rem;
+            }
+            
+            .metrics-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="main-container">
+        <div class="header">
+            <div class="header-content">
+                <h1>🚀 Nutrition Solutions Analytics</h1>
+                <p>Real-time business intelligence dashboard</p>
+                <div class="header-controls">
+                    <div class="date-range">
+                        <input type="date" id="startDate" />
+                        <span>to</span>
+                        <input type="date" id="endDate" />
+                    </div>
+                    <button class="btn" onclick="refreshDashboard()">Refresh Data</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="content">
+            <!-- Sync Status -->
+            <div class="sync-status">
+                <div class="sync-info">
+                    <div class="sync-indicator"></div>
+                    <span id="syncStatus">Loading sync status...</span>
+                </div>
+                <button class="btn" onclick="syncAllData()">Sync All Data</button>
+            </div>
+
+            <!-- Key Metrics -->
+            <div class="metrics-grid">
+                <div class="metric-card">
+                    <div class="icon">💰</div>
+                    <h3>Total Revenue</h3>
+                    <div class="value" id="totalRevenue">-</div>
+                    <div class="change positive">+0%</div>
+                </div>
+                
+                <div class="metric-card">
+                    <div class="icon">📦</div>
+                    <h3>Total Orders</h3>
+                    <div class="value" id="totalOrders">-</div>
+                    <div class="change positive">+0%</div>
+                </div>
+                
+                <div class="metric-card">
+                    <div class="icon">👥</div>
+                    <h3>Total Customers</h3>
+                    <div class="value" id="totalCustomers">-</div>
+                    <div class="change positive">+0%</div>
+                </div>
+                
+                <div class="metric-card">
+                    <div class="icon">🔄</div>
+                    <h3>Monthly Recurring</h3>
+                    <div class="value" id="mrr">-</div>
+                    <div class="change positive">+0%</div>
+                </div>
+                
+                <div class="metric-card">
+                    <div class="icon">💵</div>
+                    <h3>Avg Order Value</h3>
+                    <div class="value" id="avgOrderValue">-</div>
+                    <div class="change negative">-0%</div>
+                </div>
+                
+                <div class="metric-card">
+                    <div class="icon">📈</div>
+                    <h3>Active Subs</h3>
+                    <div class="value" id="activeSubscriptions">-</div>
+                    <div class="change positive">+0%</div>
+                </div>
+            </div>
+
+            <!-- Charts -->
+            <div class="charts-grid">
+                <div class="chart-container">
+                    <h3>Revenue Over Time</h3>
+                    <div class="chart-wrapper">
+                        <canvas id="revenueChart"></canvas>
+                    </div>
+                </div>
+                
+                <div class="chart-container">
+                    <h3>Orders by Status</h3>
+                    <div class="chart-wrapper">
+                        <canvas id="ordersChart"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <div class="charts-grid">
+                <div class="chart-container">
+                    <h3>Customer Growth</h3>
+                    <div class="chart-wrapper">
+                        <canvas id="customerChart"></canvas>
+                    </div>
+                </div>
+                
+                <div class="chart-container">
+                    <h3>Product Performance</h3>
+                    <div class="chart-wrapper">
+                        <canvas id="productChart"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Recent Orders Table -->
+            <div class="table-container">
+                <h3>Recent Orders</h3>
+                <div class="table-wrapper">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Order ID</th>
+                                <th>Customer</th>
+                                <th>Date</th>
+                                <th>Amount</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody id="ordersTable">
+                            <tr>
+                                <td colspan="5" class="loading">
+                                    <span class="spinner"></span>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Active Subscriptions Table -->
+            <div class="table-container">
+                <h3>Active Subscriptions</h3>
+                <div class="table-wrapper">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Customer</th>
+                                <th>Product</th>
+                                <th>Amount</th>
+                                <th>Cycle</th>
+                                <th>Next Billing</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody id="subscriptionsTable">
+                            <tr>
+                                <td colspan="6" class="loading">
+                                    <span class="spinner"></span>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Global variables
+        let charts = {};
+        const API_BASE = window.location.origin;
+
+        // Initialize dashboard on load
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('Dashboard initializing...');
+            
+            // Set default date range (last 30 days)
+            const endDate = new Date();
+            const startDate = new Date();
+            startDate.setDate(startDate.getDate() - 30);
+            
+            document.getElementById('startDate').value = startDate.toISOString().split('T')[0];
+            document.getElementById('endDate').value = endDate.toISOString().split('T')[0];
+            
+            // Load dashboard data
+            loadDashboardData();
+            initializeCharts();
+        });
+
+        // Load dashboard metrics
+        async function loadDashboardData() {
+            console.log('Loading dashboard data...');
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/metrics`);
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const data = await response.json();
+                
+                console.log('Dashboard data received:', data);
+                
+                // Update metrics with null checks
+                updateMetricCard('totalRevenue', data.summary?.total_revenue || 0, true);
+                updateMetricCard('totalOrders', data.orders?.total_orders || 0, false);
+                updateMetricCard('totalCustomers', data.summary?.total_customers || 0, false);
+                updateMetricCard('mrr', data.summary?.mrr || 0, true);
+                updateMetricCard('avgOrderValue', data.orders?.avg_order_value || 0, true);
+                updateMetricCard('activeSubscriptions', data.subscriptions?.active_subscriptions || 0, false);
+                
+                // Update sync status
+                updateSyncStatus();
+                
+                // Load tables with data
+                loadTables();
+            } catch (error) {
+                console.error('Failed to load dashboard data:', error);
+                showError('Failed to load dashboard data. Please try again.');
+            }
+        }
+
+        // Update metric card
+        function updateMetricCard(id, value, isCurrency = false) {
+            const element = document.getElementById(id);
+            if (element) {
+                if (isCurrency) {
+                    const numValue = parseFloat(value) || 0;
+                    element.textContent = `$${numValue.toLocaleString('en-US', { 
+                        minimumFractionDigits: 2, 
+                        maximumFractionDigits: 2 
+                    })}`;
+                } else {
+                    const numValue = parseInt(value) || 0;
+                    element.textContent = numValue.toLocaleString();
+                }
+            }
+        }
+
+        // Initialize charts
+        function initializeCharts() {
+            console.log('Initializing charts...');
+            
+            try {
+                // Revenue Chart
+                const revenueCtx = document.getElementById('revenueChart').getContext('2d');
+                charts.revenue = new Chart(revenueCtx, {
+                    type: 'line',
+                    data: {
+                        labels: generateDateLabels(7),
+                        datasets: [{
+                            label: 'Revenue',
+                            data: generateSampleData(7, 1000, 5000),
+                            borderColor: '#667eea',
+                            backgroundColor: 'rgba(102, 126, 234, 0.1)',
+                            borderWidth: 2,
+                            tension: 0.4,
+                            fill: true
+                        }]
+                    },
+                    options: getChartOptions('currency')
+                });
+
+                // Orders by Status Chart
+                const ordersCtx = document.getElementById('ordersChart').getContext('2d');
+                charts.orders = new Chart(ordersCtx, {
+                    type: 'doughnut',
+                    data: {
+                        labels: ['Paid', 'Pending', 'Cancelled'],
+                        datasets: [{
+                            data: [120, 45, 12],
+                            backgroundColor: ['#10b981', '#f59e0b', '#ef4444']
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: {
+                                position: 'bottom',
+                                labels: {
+                                    padding: 15,
+                                    font: { size: 12 }
+                                }
+                            }
+                        }
+                    }
+                });
+
+                // Customer Growth Chart
+                const customerCtx = document.getElementById('customerChart').getContext('2d');
+                charts.customers = new Chart(customerCtx, {
+                    type: 'bar',
+                    data: {
+                        labels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+                        datasets: [{
+                            label: 'New Customers',
+                            data: [12, 19, 15, 25, 22, 30, 28],
+                            backgroundColor: '#764ba2'
+                        }]
+                    },
+                    options: getChartOptions('number')
+                });
+
+                // Product Performance Chart
+                const productCtx = document.getElementById('productChart').getContext('2d');
+                charts.products = new Chart(productCtx, {
+                    type: 'bar',
+                    data: {
+                        labels: ['Product A', 'Product B', 'Product C', 'Product D'],
+                        datasets: [{
+                            label: 'Sales',
+                            data: [150, 120, 95, 80],
+                            backgroundColor: '#667eea'
+                        }]
+                    },
+                    options: {
+                        ...getChartOptions('number'),
+                        indexAxis: 'y'
+                    }
+                });
+
+                console.log('Charts initialized successfully');
+            } catch (error) {
+                console.error('Failed to initialize charts:', error);
+            }
+        }
+
+        // Get chart options
+        function getChartOptions(type = 'number') {
+            return {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        display: false
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: {
+                            callback: function(value) {
+                                if (type === 'currency') {
+                                    return '$' + value.toLocaleString();
+                                }
+                                return value.toLocaleString();
+                            }
+                        }
+                    }
+                }
+            };
+        }
+
+        // Load tables
+        function loadTables() {
+            // Sample data for orders
+            const ordersTable = document.getElementById('ordersTable');
+            ordersTable.innerHTML = `
+                <tr>
+                    <td>#1234</td>
+                    <td>John Doe</td>
+                    <td>${new Date().toLocaleDateString()}</td>
+                    <td>$150.00</td>
+                    <td><span class="status-badge paid">Paid</span></td>
+                </tr>
+                <tr>
+                    <td>#1233</td>
+                    <td>Jane Smith</td>
+                    <td>${new Date(Date.now() - 86400000).toLocaleDateString()}</td>
+                    <td>$200.00</td>
+                    <td><span class="status-badge paid">Paid</span></td>
+                </tr>
+                <tr>
+                    <td>#1232</td>
+                    <td>Bob Johnson</td>
+                    <td>${new Date(Date.now() - 172800000).toLocaleDateString()}</td>
+                    <td>$175.00</td>
+                    <td><span class="status-badge paid">Paid</span></td>
+                </tr>
+            `;
+
+            // Sample data for subscriptions
+            const subscriptionsTable = document.getElementById('subscriptionsTable');
+            subscriptionsTable.innerHTML = `
+                <tr>
+                    <td>John Doe</td>
+                    <td>Premium Plan</td>
+                    <td>$99.00</td>
+                    <td>Monthly</td>
+                    <td>${new Date(Date.now() + 30 * 86400000).toLocaleDateString()}</td>
+                    <td><span class="status-badge active">Active</span></td>
+                </tr>
+                <tr>
+                    <td>Jane Smith</td>
+                    <td>Basic Plan</td>
+                    <td>$49.00</td>
+                    <td>Monthly</td>
+                    <td>${new Date(Date.now() + 15 * 86400000).toLocaleDateString()}</td>
+                    <td><span class="status-badge active">Active</span></td>
+                </tr>
+            `;
+        }
+
+        // Utility functions
+        function generateDateLabels(days) {
+            const labels = [];
+            for (let i = days - 1; i >= 0; i--) {
+                const date = new Date();
+                date.setDate(date.getDate() - i);
+                labels.push(date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }));
+            }
+            return labels;
+        }
+
+        function generateSampleData(count, min, max) {
+            const data = [];
+            for (let i = 0; i < count; i++) {
+                data.push(Math.floor(Math.random() * (max - min + 1)) + min);
+            }
+            return data;
+        }
+
+        function updateSyncStatus() {
+            const syncStatus = document.getElementById('syncStatus');
+            syncStatus.textContent = `Last sync: ${new Date().toLocaleString()}`;
+        }
+
+        function showError(message) {
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'error-message';
+            errorDiv.textContent = message;
+            document.querySelector('.content').insertBefore(errorDiv, document.querySelector('.metrics-grid'));
+            setTimeout(() => errorDiv.remove(), 5000);
+        }
+
+        // Button actions
+        function refreshDashboard() {
+            console.log('Refreshing dashboard...');
+            loadDashboardData();
+            
+            // Update charts with animation
+            Object.values(charts).forEach(chart => {
+                chart.data.datasets.forEach(dataset => {
+                    const newData = generateSampleData(dataset.data.length, 1000, 5000);
+                    dataset.data = newData;
+                });
+                chart.update('active');
+            });
+        }
+
+        async function syncAllData() {
+            const syncButton = event.target;
+            syncButton.disabled = true;
+            syncButton.textContent = 'Syncing...';
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/sync/all`, { method: 'POST' });
+                const result = await response.json();
+                
+                if (result.success) {
+                    alert(`Sync completed!\n\nSynced: ${result.summary.totalSynced} records\nFailed: ${result.summary.totalFailed} records`);
+                    refreshDashboard();
+                } else {
+                    alert('Sync failed: ' + (result.error || 'Unknown error'));
+                }
+            } catch (error) {
+                alert('Sync error: ' + error.message);
+            } finally {
+                syncButton.disabled = false;
+                syncButton.textContent = 'Sync All Data';
+            }
+        }
+    </script>
+</body>
+</html>

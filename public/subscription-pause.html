@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Subscription Pause Manager - Nutrition Solutions</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f7fa;
+            margin: 0;
+            padding: 20px;
+            color: #333;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #667eea;
+            margin-bottom: 10px;
+        }
+        .warning {
+            background: #FEF3C7;
+            border: 1px solid #F59E0B;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 600;
+            color: #555;
+        }
+        input, select, textarea {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 16px;
+            box-sizing: border-box;
+        }
+        textarea {
+            resize: vertical;
+            min-height: 80px;
+        }
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+        }
+        button {
+            flex: 1;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 5px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+        .btn-primary:hover {
+            background: #5a67d8;
+        }
+        .btn-secondary {
+            background: #e2e8f0;
+            color: #4a5568;
+        }
+        .btn-secondary:hover {
+            background: #cbd5e0;
+        }
+        .btn-danger {
+            background: #f56565;
+            color: white;
+        }
+        .btn-danger:hover {
+            background: #e53e3e;
+        }
+        .result {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 5px;
+            display: none;
+        }
+        .result.success {
+            background: #C6F6D5;
+            border: 1px solid #48BB78;
+            color: #276749;
+        }
+        .result.error {
+            background: #FED7D7;
+            border: 1px solid #F56565;
+            color: #742A2A;
+        }
+        .info-box {
+            background: #E6FFFA;
+            border: 1px solid #38B2AC;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+        .loading {
+            display: none;
+            text-align: center;
+            margin: 20px 0;
+        }
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            display: inline-block;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        code {
+            background: #f3f4f6;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+        }
+        .thursday-note {
+            font-size: 14px;
+            color: #666;
+            margin-top: 5px;
+            font-style: italic;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Subscription Pause Manager</h1>
+        <p>Safely pause customer subscriptions without losing credits</p>
+        
+        <div class="warning">
+            <strong>⚠️ Production Use:</strong> This interface directly modifies live Keap subscriptions. 
+            Use with caution and always verify subscription ID before proceeding.
+        </div>
+
+        <div class="info-box">
+            <strong>✅ How This Works:</strong>
+            <ul style="margin: 10px 0 0 0; padding-left: 20px;">
+                <li>Updates the <code>next_bill_date</code> directly in Keap</li>
+                <li>Preserves all existing credits and subscription settings</li>
+                <li>Logs all changes for audit trail</li>
+                <li>Can push dates forward (pause) or backward (expedite)</li>
+            </ul>
+        </div>
+
+        <form id="pauseForm">
+            <div class="form-group">
+                <label for="subscriptionId">Subscription ID *</label>
+                <input type="text" id="subscriptionId" name="subscriptionId" required 
+                       placeholder="e.g., 12345">
+            </div>
+
+            <div class="form-group">
+                <label for="pauseDays">Pause Duration</label>
+                <select id="pauseDays" name="pauseDays">
+                    <option value="7" selected>7 days (1 week)</option>
+                    <option value="14">14 days (2 weeks)</option>
+                    <option value="21">21 days (3 weeks)</option>
+                    <option value="28">28 days (4 weeks)</option>
+                    <option value="-7">-7 days (expedite by 1 week)</option>
+                    <option value="custom">Custom number of days</option>
+                </select>
+                <input type="number" id="customDays" name="customDays" 
+                       placeholder="Enter number of days (negative to expedite)" 
+                       style="display: none; margin-top: 10px;">
+                <p class="thursday-note">Note: All subscriptions are billed on Thursdays</p>
+            </div>
+
+            <div class="form-group">
+                <label for="customerId">Customer ID (optional)</label>
+                <input type="text" id="customerId" name="customerId" 
+                       placeholder="e.g., 67890 (will be fetched if not provided)">
+            </div>
+
+            <div class="form-group">
+                <label for="reason">Reason for Pause</label>
+                <textarea id="reason" name="reason" 
+                          placeholder="e.g., Customer traveling, Medical hold, etc.">Customer requested pause via membership portal</textarea>
+            </div>
+
+            <div class="button-group">
+                <button type="submit" class="btn-primary">Pause Subscription</button>
+                <button type="button" class="btn-secondary" onclick="fetchSubscriptionDetails()">Fetch Details</button>
+                <button type="button" class="btn-secondary" onclick="testConnection()">Test API</button>
+            </div>
+        </form>
+
+        <div class="loading">
+            <div class="spinner"></div>
+            <p>Processing request...</p>
+        </div>
+
+        <div id="result" class="result"></div>
+    </div>
+
+    <script>
+        const API_BASE = window.location.origin;
+
+        // Handle custom days selection
+        document.getElementById('pauseDays').addEventListener('change', function(e) {
+            const customDaysInput = document.getElementById('customDays');
+            if (e.target.value === 'custom') {
+                customDaysInput.style.display = 'block';
+                customDaysInput.required = true;
+            } else {
+                customDaysInput.style.display = 'none';
+                customDaysInput.required = false;
+            }
+        });
+
+        // Handle form submission
+        document.getElementById('pauseForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const loading = document.querySelector('.loading');
+            const resultDiv = document.getElementById('result');
+            const submitButton = e.target.querySelector('button[type="submit"]');
+            
+            // Get form values
+            const pauseDaysSelect = document.getElementById('pauseDays').value;
+            let pauseDays = pauseDaysSelect === 'custom' 
+                ? parseInt(document.getElementById('customDays').value) 
+                : parseInt(pauseDaysSelect);
+            
+            const data = {
+                subscriptionId: document.getElementById('subscriptionId').value.trim(),
+                pauseDays: pauseDays,
+                customerId: document.getElementById('customerId').value.trim() || undefined,
+                reason: document.getElementById('reason').value.trim()
+            };
+
+            // Validate
+            if (!data.subscriptionId) {
+                showResult('error', 'Subscription ID is required');
+                return;
+            }
+
+            if (isNaN(pauseDays)) {
+                showResult('error', 'Invalid pause duration');
+                return;
+            }
+
+            // Confirm action
+            const action = pauseDays > 0 ? `pause for ${pauseDays} days` : `expedite by ${Math.abs(pauseDays)} days`;
+            if (!confirm(`Are you sure you want to ${action} subscription ${data.subscriptionId}?`)) {
+                return;
+            }
+
+            // Show loading
+            loading.style.display = 'block';
+            submitButton.disabled = true;
+            resultDiv.style.display = 'none';
+
+            try {
+                const response = await fetch(`${API_BASE}/api/subscription/pause`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(data)
+                });
+
+                const result = await response.json();
+
+                if (response.status === 501) {
+                    // API limitation - show alternatives
+                    showResult('error', `
+                        <strong>⚠️ API Limitation:</strong> ${result.message}<br><br>
+                        <strong>Current Billing Date:</strong> ${formatDate(result.data.currentNextBillDate)}<br>
+                        <strong>Desired Billing Date:</strong> ${formatDate(result.data.desiredNextBillDate)}<br><br>
+                        <strong>Available Alternatives:</strong><br>
+                        <ol>
+                            <li><strong>${result.alternatives.option1.method}:</strong> ${result.alternatives.option1.description}<br>
+                                <em>Pros:</em> ${result.alternatives.option1.pros}<br>
+                                <em>Cons:</em> ${result.alternatives.option1.cons}</li>
+                            <li><strong>${result.alternatives.option2.method}:</strong> ${result.alternatives.option2.description}<br>
+                                <em>Pros:</em> ${result.alternatives.option2.pros}<br>
+                                <em>Cons:</em> ${result.alternatives.option2.cons}</li>
+                            <li><strong>${result.alternatives.option3.method}:</strong> ${result.alternatives.option3.description}<br>
+                                <em>Pros:</em> ${result.alternatives.option3.pros}<br>
+                                <em>Cons:</em> ${result.alternatives.option3.cons}</li>
+                        </ol>
+                        <strong>Recommendation:</strong> ${result.recommendation}
+                    `);
+                } else if (result.success) {
+                    showResult('success', `
+                        <strong>✅ Success!</strong><br>
+                        Subscription ID: ${result.data.subscriptionId}<br>
+                        Old Next Bill Date: ${formatDate(result.data.oldNextBillDate)}<br>
+                        New Next Bill Date: ${formatDate(result.data.newNextBillDate)}<br>
+                        Status: ${result.data.status}
+                    `);
+                    
+                    // Clear form
+                    document.getElementById('subscriptionId').value = '';
+                    document.getElementById('customerId').value = '';
+                    document.getElementById('customDays').value = '';
+                    document.getElementById('pauseDays').value = '7';
+                } else {
+                    showResult('error', `<strong>❌ Error:</strong> ${result.error || result.message || 'Unknown error'}`);
+                }
+            } catch (error) {
+                showResult('error', `<strong>❌ Error:</strong> ${error.message}`);
+            } finally {
+                loading.style.display = 'none';
+                submitButton.disabled = false;
+            }
+        });
+
+        async function fetchSubscriptionDetails() {
+            const subscriptionId = document.getElementById('subscriptionId').value.trim();
+            
+            if (!subscriptionId) {
+                showResult('error', 'Please enter a Subscription ID first');
+                return;
+            }
+            
+            const loading = document.querySelector('.loading');
+            const resultDiv = document.getElementById('result');
+            
+            loading.style.display = 'block';
+            resultDiv.style.display = 'none';
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/subscription/debug?id=${subscriptionId}`);
+                const result = await response.json();
+                
+                if (result.success) {
+                    showResult('success', `
+                        <strong>✅ Subscription Details:</strong><br>
+                        <strong>ID:</strong> ${result.subscription.id}<br>
+                        <strong>Status:</strong> ${result.subscription.status}<br>
+                        <strong>Billing Amount:</strong> $${result.subscription.billing_amount}<br>
+                        <strong>Billing Cycle:</strong> ${result.subscription.billing_cycle}<br>
+                        <strong>Current Next Bill Date:</strong> ${formatDate(result.subscription.next_bill_date || 'Not set')}<br>
+                        <strong>Start Date:</strong> ${formatDate(result.subscription.start_date)}<br>
+                        <strong>End Date:</strong> ${result.subscription.end_date ? formatDate(result.subscription.end_date) : 'Active'}<br>
+                        <strong>Contact ID:</strong> ${result.subscription.contact_id}<br>
+                        <strong>Product ID:</strong> ${result.subscription.product_id}
+                    `);
+                } else {
+                    showResult('error', `<strong>❌ Error:</strong> ${result.error}`);
+                }
+            } catch (error) {
+                showResult('error', `<strong>❌ Error:</strong> ${error.message}`);
+            } finally {
+                loading.style.display = 'none';
+            }
+        }
+
+        async function testConnection() {
+            const resultDiv = document.getElementById('result');
+            resultDiv.innerHTML = 'Testing API connection...';
+            resultDiv.className = 'result';
+            resultDiv.style.display = 'block';
+
+            try {
+                const response = await fetch(`${API_BASE}/api/tables`);
+                const data = await response.json();
+                
+                showResult('success', `
+                    <strong>✅ API Connection Successful!</strong><br>
+                    Database tables found: ${data.count}<br>
+                    Ready to process subscription pauses.
+                `);
+            } catch (error) {
+                showResult('error', `<strong>❌ Connection Error:</strong> ${error.message}`);
+            }
+        }
+
+        function showResult(type, message) {
+            const resultDiv = document.getElementById('result');
+            resultDiv.innerHTML = message;
+            resultDiv.className = `result ${type}`;
+            resultDiv.style.display = 'block';
+            
+            // Auto-hide success messages after 10 seconds
+            if (type === 'success') {
+                setTimeout(() => {
+                    resultDiv.style.display = 'none';
+                }, 10000);
+            }
+        }
+
+        function formatDate(dateString) {
+            const date = new Date(dateString);
+            return date.toLocaleDateString('en-US', {
+                weekday: 'long',
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric'
+            });
+        }
+    </script>
+</body>
+</html>

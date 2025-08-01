@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Active Subscriptions - Nutrition Solutions</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background-color: #f5f5f5;
+      color: #333;
+      line-height: 1.6;
+    }
+
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+
+    header {
+      background: white;
+      padding: 20px 0;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      margin-bottom: 30px;
+    }
+
+    h1 {
+      color: #2563eb;
+      font-size: 2rem;
+      font-weight: 600;
+    }
+
+    .controls {
+      background: white;
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      margin-bottom: 20px;
+      display: flex;
+      gap: 20px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .controls button {
+      background-color: #2563eb;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+      transition: background-color 0.2s;
+    }
+
+    .controls button:hover {
+      background-color: #1d4ed8;
+    }
+
+    .controls button:disabled {
+      background-color: #9ca3af;
+      cursor: not-allowed;
+    }
+
+    .filters {
+      display: flex;
+      gap: 15px;
+      align-items: center;
+      flex: 1;
+    }
+
+    .filters select, .filters input {
+      padding: 8px 12px;
+      border: 1px solid #e5e7eb;
+      border-radius: 6px;
+      font-size: 14px;
+    }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 20px;
+      margin-bottom: 30px;
+    }
+
+    .stat-card {
+      background: white;
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+
+    .stat-card h3 {
+      color: #6b7280;
+      font-size: 14px;
+      font-weight: 500;
+      margin-bottom: 8px;
+      text-transform: uppercase;
+    }
+
+    .stat-card .value {
+      font-size: 2rem;
+      font-weight: 600;
+      color: #1f2937;
+    }
+
+    .stat-card .subtext {
+      color: #6b7280;
+      font-size: 14px;
+      margin-top: 4px;
+    }
+
+    .table-container {
+      background: white;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      overflow: hidden;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    th {
+      background-color: #f9fafb;
+      padding: 12px;
+      text-align: left;
+      font-weight: 600;
+      color: #374151;
+      border-bottom: 1px solid #e5e7eb;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+
+    td {
+      padding: 12px;
+      border-bottom: 1px solid #f3f4f6;
+    }
+
+    tr:hover {
+      background-color: #f9fafb;
+    }
+
+    .status-badge {
+      display: inline-block;
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 500;
+    }
+
+    .status-active {
+      background-color: #d1fae5;
+      color: #065f46;
+    }
+
+    .status-paused {
+      background-color: #fef3c7;
+      color: #92400e;
+    }
+
+    .status-cancelled {
+      background-color: #fee2e2;
+      color: #991b1b;
+    }
+
+    .loading {
+      text-align: center;
+      padding: 40px;
+      color: #6b7280;
+    }
+
+    .error {
+      background-color: #fee2e2;
+      color: #991b1b;
+      padding: 20px;
+      border-radius: 8px;
+      margin: 20px 0;
+    }
+
+    .no-data {
+      text-align: center;
+      padding: 60px;
+      color: #6b7280;
+    }
+
+    .actions {
+      display: flex;
+      gap: 10px;
+    }
+
+    .action-btn {
+      padding: 4px 8px;
+      font-size: 12px;
+      border: 1px solid #e5e7eb;
+      background: white;
+      color: #374151;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .action-btn:hover {
+      background-color: #f3f4f6;
+      border-color: #d1d5db;
+    }
+
+    .modal {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background-color: rgba(0,0,0,0.5);
+      z-index: 1000;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .modal-content {
+      background: white;
+      padding: 30px;
+      border-radius: 8px;
+      max-width: 500px;
+      width: 90%;
+    }
+
+    .modal h2 {
+      margin-bottom: 20px;
+      color: #1f2937;
+    }
+
+    .modal-buttons {
+      display: flex;
+      gap: 10px;
+      justify-content: flex-end;
+      margin-top: 20px;
+    }
+
+    @media (max-width: 768px) {
+      .table-container {
+        overflow-x: auto;
+      }
+
+      table {
+        min-width: 800px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="container">
+      <h1>Active Subscriptions</h1>
+    </div>
+  </header>
+
+  <div class="container">
+    <div class="controls">
+      <button id="syncBtn" onclick="syncSubscriptions()">Sync with Keap</button>
+      <button onclick="exportData()">Export CSV</button>
+      
+      <div class="filters">
+        <select id="statusFilter" onchange="filterData()">
+          <option value="">All Statuses</option>
+          <option value="active">Active</option>
+          <option value="paused">Paused</option>
+          <option value="cancelled">Cancelled</option>
+        </select>
+        
+        <input type="text" id="searchInput" placeholder="Search by name or email..." onkeyup="filterData()">
+      </div>
+    </div>
+
+    <div class="stats" id="stats">
+      <div class="stat-card">
+        <h3>Total Active</h3>
+        <div class="value" id="totalActive">-</div>
+        <div class="subtext">subscriptions</div>
+      </div>
+      <div class="stat-card">
+        <h3>Monthly Revenue</h3>
+        <div class="value" id="monthlyRevenue">-</div>
+        <div class="subtext">recurring</div>
+      </div>
+      <div class="stat-card">
+        <h3>Average Value</h3>
+        <div class="value" id="avgValue">-</div>
+        <div class="subtext">per subscription</div>
+      </div>
+      <div class="stat-card">
+        <h3>Next 7 Days</h3>
+        <div class="value" id="nextWeek">-</div>
+        <div class="subtext">upcoming charges</div>
+      </div>
+    </div>
+
+    <div class="table-container">
+      <div id="loading" class="loading">Loading subscriptions...</div>
+      <div id="error" class="error" style="display: none;"></div>
+      <table id="subscriptionsTable" style="display: none;">
+        <thead>
+          <tr>
+            <th>Customer</th>
+            <th>Email</th>
+            <th>Product</th>
+            <th>Status</th>
+            <th>Amount</th>
+            <th>Cycle</th>
+            <th>Next Bill Date</th>
+            <th>Start Date</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="tableBody">
+        </tbody>
+      </table>
+      <div id="noData" class="no-data" style="display: none;">
+        No subscriptions found. Click "Sync with Keap" to import data.
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let allSubscriptions = [];
+    let filteredSubscriptions = [];
+
+    async function loadSubscriptions() {
+      try {
+        const response = await fetch('/api/subscriptions');
+        const data = await response.json();
+        
+        if (!response.ok) {
+          throw new Error(data.error || 'Failed to load subscriptions');
+        }
+
+        allSubscriptions = data.subscriptions || [];
+        filteredSubscriptions = allSubscriptions;
+        
+        document.getElementById('loading').style.display = 'none';
+        
+        if (allSubscriptions.length === 0) {
+          document.getElementById('noData').style.display = 'block';
+          document.getElementById('subscriptionsTable').style.display = 'none';
+        } else {
+          document.getElementById('noData').style.display = 'none';
+          document.getElementById('subscriptionsTable').style.display = 'table';
+          updateStats();
+          renderTable();
+        }
+      } catch (error) {
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('error').style.display = 'block';
+        document.getElementById('error').textContent = error.message;
+      }
+    }
+
+    async function syncSubscriptions() {
+      const btn = document.getElementById('syncBtn');
+      btn.disabled = true;
+      btn.textContent = 'Syncing...';
+      
+      try {
+        const authToken = prompt('Enter authentication token:');
+        if (!authToken) {
+          btn.disabled = false;
+          btn.textContent = 'Sync with Keap';
+          return;
+        }
+
+        const response = await fetch('/api/sync/subscriptions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${authToken}`,
+            'Content-Type': 'application/json'
+          }
+        });
+        
+        const data = await response.json();
+        
+        if (!response.ok) {
+          throw new Error(data.error || 'Sync failed');
+        }
+
+        alert(`Success! Synced ${data.totalSynced} subscriptions.`);
+        location.reload();
+      } catch (error) {
+        alert('Error: ' + error.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Sync with Keap';
+      }
+    }
+
+    function updateStats() {
+      const activeSubscriptions = allSubscriptions.filter(sub => sub.status === 'active');
+      const monthlyRevenue = activeSubscriptions.reduce((sum, sub) => {
+        const amount = parseFloat(sub.billing_amount) || 0;
+        const multiplier = sub.billing_cycle === 'weekly' ? 4.33 : 
+                          sub.billing_cycle === 'monthly' ? 1 : 
+                          sub.billing_cycle === 'yearly' ? 0.083 : 1;
+        return sum + (amount * multiplier);
+      }, 0);
+      
+      const avgValue = activeSubscriptions.length > 0 ? monthlyRevenue / activeSubscriptions.length : 0;
+      
+      const nextWeek = new Date();
+      nextWeek.setDate(nextWeek.getDate() + 7);
+      const upcomingCharges = activeSubscriptions.filter(sub => {
+        const nextBillDate = new Date(sub.next_billing_date || sub.next_bill_date);
+        return nextBillDate <= nextWeek && nextBillDate >= new Date();
+      }).length;
+
+      document.getElementById('totalActive').textContent = activeSubscriptions.length;
+      document.getElementById('monthlyRevenue').textContent = '$' + monthlyRevenue.toFixed(2);
+      document.getElementById('avgValue').textContent = '$' + avgValue.toFixed(2);
+      document.getElementById('nextWeek').textContent = upcomingCharges;
+    }
+
+    function renderTable() {
+      const tbody = document.getElementById('tableBody');
+      tbody.innerHTML = '';
+
+      filteredSubscriptions.forEach(sub => {
+        const row = tbody.insertRow();
+        row.innerHTML = `
+          <td>${sub.contact_name || 'Unknown'}</td>
+          <td>${sub.contact_email || '-'}</td>
+          <td>${sub.product_name || sub.product_id || '-'}</td>
+          <td><span class="status-badge status-${sub.status}">${sub.status}</span></td>
+          <td>$${parseFloat(sub.billing_amount).toFixed(2)}</td>
+          <td>${sub.billing_cycle}</td>
+          <td>${formatDate(sub.next_billing_date || sub.next_bill_date)}</td>
+          <td>${formatDate(sub.start_date)}</td>
+          <td class="actions">
+            <button class="action-btn" onclick="viewDetails('${sub.keap_subscription_id}')">View</button>
+          </td>
+        `;
+      });
+    }
+
+    function formatDate(dateString) {
+      if (!dateString) return '-';
+      const date = new Date(dateString);
+      return date.toLocaleDateString('en-US', { 
+        year: 'numeric', 
+        month: 'short', 
+        day: 'numeric' 
+      });
+    }
+
+    function filterData() {
+      const statusFilter = document.getElementById('statusFilter').value;
+      const searchTerm = document.getElementById('searchInput').value.toLowerCase();
+
+      filteredSubscriptions = allSubscriptions.filter(sub => {
+        const matchesStatus = !statusFilter || sub.status === statusFilter;
+        const matchesSearch = !searchTerm || 
+          (sub.contact_name && sub.contact_name.toLowerCase().includes(searchTerm)) ||
+          (sub.contact_email && sub.contact_email.toLowerCase().includes(searchTerm)) ||
+          (sub.product_name && sub.product_name.toLowerCase().includes(searchTerm));
+        
+        return matchesStatus && matchesSearch;
+      });
+
+      renderTable();
+    }
+
+    function exportData() {
+      const csv = [
+        ['Customer', 'Email', 'Product', 'Status', 'Amount', 'Cycle', 'Next Bill Date', 'Start Date'],
+        ...filteredSubscriptions.map(sub => [
+          sub.contact_name || '',
+          sub.contact_email || '',
+          sub.product_name || sub.product_id || '',
+          sub.status,
+          sub.billing_amount,
+          sub.billing_cycle,
+          sub.next_billing_date || sub.next_bill_date || '',
+          sub.start_date || ''
+        ])
+      ].map(row => row.map(cell => `"${cell}"`).join(',')).join('\n');
+
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `subscriptions-${new Date().toISOString().split('T')[0]}.csv`;
+      a.click();
+    }
+
+    function viewDetails(subscriptionId) {
+      const sub = allSubscriptions.find(s => s.keap_subscription_id === subscriptionId);
+      if (sub) {
+        alert(`Subscription Details:\n\nID: ${sub.keap_subscription_id}\nCustomer: ${sub.contact_name}\nProduct: ${sub.product_name}\nStatus: ${sub.status}\nAmount: $${sub.billing_amount}\nNext Bill: ${formatDate(sub.next_billing_date || sub.next_bill_date)}`);
+      }
+    }
+
+    // Load subscriptions on page load
+    document.addEventListener('DOMContentLoaded', loadSubscriptions);
+  </script>
+</body>
+</html>

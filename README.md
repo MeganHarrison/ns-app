@@ -1,48 +1,182 @@
-# d1-starter-sessions-api
+# Nutrition Solutions Analytics Platform
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/cloudflare/templates/tree/main/d1-starter-sessions-api-template)
+A high-performance analytics platform built on Cloudflare Workers that integrates with Keap CRM to provide real-time business intelligence and replace expensive third-party solutions like Grow.com.
 
-<!-- dash-content-start -->
+## 🚀 Overview
 
-Starter repository using Cloudflare Workers with D1 database and the new [D1 Sessions API for read replication](https://developers.cloudflare.com/d1/best-practices/read-replication/#use-sessions-api).
+This platform provides:
+- **Real-time Keap CRM integration** for orders, contacts, products, and subscriptions
+- **Lightning-fast analytics** using Cloudflare D1 and intelligent caching
+- **Cost savings of $3,380/month** (Grow.com: $3,400/month → This platform: ~$20/month)
+- **Sub-second dashboard loading** with optimized data delivery
+- **Automatic hourly data synchronization** via cron jobs
 
-## What is the demo?
+## 🏗️ Architecture
 
-This demo simulates purchase orders administration.
-There are two main actions you can do.
+```
+Keap CRM API → Cloudflare Worker → D1 Database → KV Cache → Frontend Dashboard
+                        ↓
+                  Supabase (via Hyperdrive)
+```
 
-1. Create an order with a `customerId`, `orderId`, and `quantity`.
-2. List all orders.
+### Core Components:
+- **Main Worker**: `d1-starter-sessions-api` at https://d1-starter-sessions-api.megan-d14.workers.dev
+- **D1 Database**: Local SQLite for fast queries
+- **KV Storage**: Intelligent caching layer
+- **Hyperdrive**: Optimized PostgreSQL connections to Supabase
+- **Cron Triggers**: Automatic hourly data sync
 
-The UI when visiting the deployed Worker project shows 3 buttons.
+## 📁 Project Structure
 
-- **Create order & List**
-  - Creates a new order using the provided customer ID with a random order ID and quantity.
-  - Does a `POST /api/orders` request to the Worker, and its handler uses the Sessions API to do an `INSERT` first for the new order that will be forwarded to the primary database instance, followed by a `SELECT` query to list all orders that will be executed by nearest replica database.
-- **List orders**
-  - Lists every order recorded in the database.
-  - Does a `GET /api/orders` request to the Worker, and its handler uses the Sessions API to do a `SELECT` query to list the orders that will be executed by the nearest replica database.
-- **Reset**
-  - Drops and recreates the orders table.
-  - Gets executed by the primary database.
+```
+/ns-app/
+├── src/index.ts               # Main worker code with all API endpoints
+├── workers/keap-client.ts     # Keap API v2 client implementation
+├── wrangler.toml             # Cloudflare deployment configuration
+├── public/                   # Static HTML files
+│   ├── index.html           # Main dashboard
+│   ├── keap-orders.html     # Orders management UI
+│   ├── dashboard-v2.html    # Analytics dashboard
+│   └── debug.html           # Debug interface
+└── package.json             # Dependencies and scripts
+```
 
-The UI JavaScript code maintains the latest `bookmark` returned by the API and sends it along every subsequent request.
-This ensures that we have sequential consistency in our observed database results and all our actions are properly ordered.
+## 🔌 API Endpoints
 
-Read more information about how the Sessions API works, and how sequential consistency is achieved in the [D1 read replication documentation](https://developers.cloudflare.com/d1/best-practices/read-replication/).
+### Analytics & Dashboard
+- `GET /` - Main dashboard interface
+- `GET /api/metrics` - Business metrics with caching
+- `GET /api/dashboard` - Comprehensive dashboard data
 
-<!-- dash-content-end -->
+### Keap Integration
+- `GET /keap-orders` - Live orders from Keap API
+- `POST /api/sync-orders` - Sync orders from Keap to D1 ✅
+- `POST /api/sync/contacts` - Sync contacts (TODO)
+- `POST /api/sync/products` - Sync products (TODO)
+- `POST /api/sync/subscriptions` - Sync subscriptions (TODO)
 
-## Deploy
+### Database Management
+- `POST /api/migrate` - Run database migration
+- `GET /api/tables` - List all database tables
+- `GET /api/debug/db-status` - Database status
 
-1. Checkout the project locally.
-2. Run `npm ci` to install all dependencies.
-3. Run `npm run deploy` to deploy to your Cloudflare account.
-4. Visit the URL you got in step 3.
+### Webhooks
+- `POST /api/webhooks/keap` - Receive real-time updates
+- `GET /api/webhooks/register` - Get webhook setup info
 
-## Local development
+## 🗄️ Database Schema
 
-1. Run `npm run dev` to start the development server.
-2. Visit <http://localhost:8787>.
+The platform uses the following tables:
+- `companies` - Company/account information
+- `contacts` - Customer contact details
+- `products` - Product catalog
+- `orders` - Order transactions
+- `subscriptions` - Recurring subscriptions
+- `sync_logs` - Synchronization history
 
-Note: The "Served by Region" information won't be shown when running locally.
+## 🚀 Deployment
+
+### Prerequisites
+- Cloudflare account with Workers enabled
+- Keap CRM account with API access
+- Node.js 18+ installed locally
+
+### Initial Setup
+
+1. **Clone and install dependencies**
+   ```bash
+   git clone <repo>
+   cd ns-app
+   npm install
+   ```
+
+2. **Create KV namespaces**
+   ```bash
+   wrangler kv namespace create "SYNC_STATE"
+   wrangler kv namespace create "CACHE"
+   ```
+
+3. **Set secrets**
+   ```bash
+   wrangler secret put KEAP_SERVICE_ACCOUNT_KEY
+   wrangler secret put KEAP_SECRET
+   ```
+
+4. **Deploy the worker**
+   ```bash
+   npm run deploy
+   ```
+
+### Environment Configuration
+
+Update `wrangler.toml` with your IDs:
+```toml
+name = "d1-starter-sessions-api"
+compatibility_date = "2025-03-17"
+account_id = "YOUR_ACCOUNT_ID"
+
+[[kv_namespaces]]
+binding = "SYNC_STATE"
+id = "YOUR_KV_ID"
+
+[[d1_databases]]
+binding = "DB01"
+database_name = "d1-starter-sessions-api"
+database_id = "YOUR_D1_ID"
+```
+
+## 🔧 Recent Updates (July 2025)
+
+### Fixed Issues:
+1. **Authentication**: Properly configured Keap Service Account Key as a secret
+2. **Import Paths**: Fixed KeapClient import from `../workers/keap-client`
+3. **API Integration**: Updated to use correct KeapClient constructor with config object
+4. **Database Schema**: Aligned sync-orders with existing `orders` table structure
+5. **Performance**: Implemented batch inserts for efficient data loading
+6. **Configuration**: Fixed duplicate triggers and invalid Hyperdrive IDs in wrangler.toml
+
+### Key Changes:
+```javascript
+// Before (broken):
+const keapClient = new KeapClient(env.KEAP_SERVICE_ACCOUNT_KEY);
+
+// After (fixed):
+const keapClient = new KeapClient({ serviceAccountKey: env.KEAP_SERVICE_ACCOUNT_KEY });
+```
+
+## 🛠️ Local Development
+
+1. **Start dev server**
+   ```bash
+   npm run dev
+   ```
+
+2. **View local site**
+   - Main: http://localhost:8787
+   - Orders: http://localhost:8787/keap-orders.html
+
+3. **Run tests**
+   ```bash
+   npm test
+   ```
+
+## 💰 Cost Analysis
+
+| Service | Grow.com | This Platform |
+|---------|----------|---------------|
+| Monthly Cost | $3,400 | ~$20 |
+| Annual Savings | - | $40,560 |
+| Performance | Slow | Sub-second |
+| Customization | Limited | Unlimited |
+
+## 🔮 Roadmap
+
+- [ ] Complete contact and subscription sync endpoints
+- [ ] Add AI-powered customer insights
+- [ ] Implement predictive analytics
+- [ ] Build mobile-responsive dashboard
+- [ ] Add real-time notifications
+
+## 📝 License
+
+Proprietary - Nutrition Solutions
