@@ -1,0 +1,53 @@
+{
+  // Nutrition Solutions Sync Worker Configuration
+  "name": "nutrition-solutions-sync",
+  "main": "src/index.js",
+  "compatibility_date": "2024-05-15",
+  
+  // KV namespaces
+  "kv_namespaces": [
+    {
+      // For storing sync state and tokens
+      "binding": "SYNC_STATE",
+      "id": "e3c00f1508eb40839e312defdbc0b696",
+      "preview_id": "c494a513826048dfb8c4d50fce4f6242"
+    },
+    {
+      // For caching
+      "binding": "CACHE",
+      "id": "246a76714a2a49d5852dd7831dd6d731"
+    }
+  ],
+  
+  // Hyperdrive binding for Supabase
+  "hyperdrive": [
+    {
+      "binding": "HYPERDRIVE",
+      "id": "045b4b4c047b40afb603b1428f726b39" // supabase-ns
+    }
+  ],
+  
+  // D1 database
+  "d1_databases": [
+    {
+      "binding": "DB01",
+      "database_name": "d1-starter-sessions-api",
+      "database_id": "4c70d7eb-d173-4396-b11b-6bbb971eaac7"
+    }
+  ],
+  
+  // Environment variables
+  "vars": {
+    "KEAP_APP_ID": "f3758888-5b87-4228-b394-669991d857f8",
+    "KEAP_CLIENT_ID": "q97htu3Rn9eW0tSPh5WNIWeN5bUVn57sIWiAZctwx3O8kov6",
+    // Secrets should be set with: wrangler secret put SECRET_NAME
+    "KEAP_SECRET": "rNCXjoS2yHNHJacugnzBY4rRdGTH93ILiuVxQGGhH76PAaIheYEyMs2YCLv9zKz4",
+    "KEAP_SERVICE_ACCOUNT_KEY": "KeapAK-6c2fca41fb2fda9bc2d39f47d621cfa4ab13eaf2c4ef062b0a",
+    "WORKER_AUTH_TOKEN": "GqmS3WJHA69Prddovzvrjmpf_IZ1kfkFrS9SrNIz"
+  },
+  
+  // Cron trigger for automatic syncing every hour
+  "triggers": {
+    "crons": ["0 * * * *"]
+  }
+}

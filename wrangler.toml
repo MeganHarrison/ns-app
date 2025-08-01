@@ -1,47 +1,49 @@
-name = "d1-starter-sessions-api"
+# Modern Nutrition Solutions BI Configuration
+name = "nutrition-solutions-bi"
 main = "src/index.ts"
-compatibility_date = "2025-03-17"
-compatibility_flags = ["nodejs_compat"]
-account_id = "d1416265449d2a0bae41c45c791270ec"
+compatibility_date = "2024-08-01"
 
-# Observability
-[observability]
-enabled = true
+# Environment variables
+[vars]
+KEAP_CLIENT_ID = "q97htu3Rn9eW0tSPh5WNIWeN5bUVn57sIWiAZctwx3O8kov6"
+KEAP_APP_ID = "f3758888-5b87-4228-b394-669991d857f8"
 
-# Assets
-[assets]
-directory = "./public/"
+# D1 Database binding - using your nutrition-solutions-db
+[[d1_databases]]
+binding = "DB"
+database_name = "nutrition-solutions-db"
+database_id = "d6966e03-8afe-4fae-b150-474104552cdb"
 
-# KV namespace for storing sync state and tokens
+# KV namespace for sync state
 [[kv_namespaces]]
 binding = "SYNC_STATE"
 id = "e3c00f1508eb40839e312defdbc0b696"
 preview_id = "c494a513826048dfb8c4d50fce4f6242"
 
-# Hyperdrive binding - replace with your actual Hyperdrive ID
-[[hyperdrive]]
-binding = "HYPERDRIVE"
-id = "e9bedbd4ce61453da32030c8333e1f25" # supabase-ns
-
-
-# Cron trigger for automatic syncing every hour
-[triggers]
-crons = ["0 * * * *"]
-
-# D1 database (matching wrangler.jsonc)
-[[d1_databases]]
-binding = "DB01"
-database_name = "d1-starter-sessions-api"
-database_id = "4c70d7eb-d173-4396-b11b-6bbb971eaac7"
-
-# KV namespace for caching
 [[kv_namespaces]]
 binding = "CACHE"
-id = "246a76714a2a49d5852dd7831dd6d731"
+id = "your-cache-namespace-id"
+preview_id = "your-cache-preview-id"
 
-[vars]
-KEAP_APP_ID = "f3758888-5b87-4228-b394-669991d857f8"
-KEAP_CLIENT_ID = "q97htu3Rn9eW0tSPh5WNIWeN5bUVn57sIWiAZctwx3O8kov6"
-WORKER_AUTH_TOKEN = "GqmS3WJHA69Prddovzvrjmpf_IZ1kfkFrS9SrNIz"
-SUPABASE_URL = "https://ulyrnuemxucoglbcwzig.supabase.co"
+# R2 bucket for file storage and exports
+[[r2_buckets]]
+binding = "REPORTS"
+bucket_name = "nutrition-bi-reports"
 
+# Queue for background processing
+[[queues.producers]]
+binding = "SYNC_QUEUE"
+queue = "nutrition-data-sync"
+
+# Analytics Engine for performance monitoring
+[[analytics_engine_datasets]]
+binding = "ANALYTICS"
+dataset = "nutrition_bi_metrics"
+
+# Observability settings
+[observability.logs]
+enabled = true
+
+# Scheduled triggers for automatic sync (every 6 hours)
+[triggers]
+crons = ["0 */6 * * *"]

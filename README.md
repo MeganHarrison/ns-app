@@ -176,7 +176,3 @@ const keapClient = new KeapClient({ serviceAccountKey: env.KEAP_SERVICE_ACCOUNT_
 - [ ] Implement predictive analytics
 - [ ] Build mobile-responsive dashboard
 - [ ] Add real-time notifications
-
-## 📝 License
-
-Proprietary - Nutrition Solutions

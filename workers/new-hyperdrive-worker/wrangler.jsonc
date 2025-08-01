@@ -1,0 +1,23 @@
+{
+  // New Hyperdrive Worker Configuration
+  "name": "new-hyperdrive-worker",
+  "main": "src/index.ts",
+  "compatibility_date": "2024-09-23",
+  "compatibility_flags": ["nodejs_compat"],
+  
+  // Hyperdrive binding
+  "hyperdrive": [
+    {
+      "binding": "HYPERDRIVE",
+      "id": "e9bedbd4ce61453da32030c8333e1f25"
+      // For local development, you need to set this environment variable:
+      // export WRANGLER_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE="postgresql://user:password@localhost:5432/dbname"
+      // Or use your Supabase connection string for development
+    }
+  ],
+  
+  // Environment variables
+  "vars": {
+    "KEAP_SERVICE_ACCOUNT_KEY": "KeapAK-6c2fca41fb2fda9bc2d39f47d621cfa4ab13eaf2c4ef062b0a"
+  }
+}

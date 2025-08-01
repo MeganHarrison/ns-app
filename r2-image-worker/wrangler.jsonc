@@ -1,0 +1,27 @@
+{
+  // R2 Image Worker Configuration
+  "name": "r2-image-worker",
+  "main": "src/index.js",
+  "compatibility_date": "2025-03-17",
+  "account_id": "d1416265449d2a0bae41c45c791270ec",
+  
+  // R2 bucket binding for mkh-images
+  "r2_buckets": [
+    {
+      "binding": "MY_BUCKET",
+      "bucket_name": "mkh-images"
+    }
+  ],
+  
+  // Environment variables
+  "vars": {
+    "BUCKET_NAME": "mkh-images",
+    "MAX_FILE_SIZE": "10485760",  // 10MB in bytes
+    "ALLOWED_ORIGINS": "*"
+  },
+  
+  // Workers Analytics Engine (optional, for usage tracking)
+  "observability": {
+    "enabled": true
+  }
+}
